@@ -64,14 +64,14 @@ def render_pipeline_flow(trace_data: Dict[str, Any], expandable: bool = True):
     cols = st.columns(8)
     
     for i, gate_info in enumerate([
-        {"num": 1, "name": "Schema & injection checks", "desc": "Schema & injection checks"},
-        {"num": 2, "name": "Goal classification", "desc": "Goal classification"},
-        {"num": 3, "name": "PII/PHI detection", "desc": "PII/PHI detection"},
-        {"num": 4, "name": "Rule selection", "desc": "Rule selection"},
-        {"num": 5, "name": "Eligibility check", "desc": "Eligibility check"},
-        {"num": 6, "name": "Final verdict", "desc": "Final verdict"},
-        {"num": 7, "name": "Decision capture", "desc": "Decision capture"},
-        {"num": 8, "name": "Audit packet", "desc": "Audit packet"}
+        {"num": 1, "name": "Input Validation", "desc": "Input Validation"},
+        {"num": 2, "name": "Intent Classification", "desc": "Intent Classification"},
+        {"num": 3, "name": "Data Classification", "desc": "Data Classification"},
+        {"num": 4, "name": "Policy Lookup", "desc": "Policy Lookup"},
+        {"num": 5, "name": "Permission Check", "desc": "Permission Check"},
+        {"num": 6, "name": "Action Approval", "desc": "Action Approval"},
+        {"num": 7, "name": "Evidence Capture", "desc": "Evidence Capture"},
+        {"num": 8, "name": "Audit Export", "desc": "Audit Export"}
     ]):
         gate_num = gate_info["num"]
         gate_result = next((g for g in gate_results if g.get("gate_num") == gate_num), None)
@@ -142,16 +142,9 @@ def render_pipeline_flow(trace_data: Dict[str, Any], expandable: bool = True):
                 ">
                     <div style="font-weight: bold; font-size: 12px;">Gate {gate_num}</div>
                     <div style="font-size: 10px; margin-top: 5px;">{gate_info['name']}</div>
-                </div>
-                """, unsafe_allow_html=True)
-    
-    # Draw arrows between gates (using markdown)
-    st.markdown("""
-    <div style="display: flex; justify-content: space-between; margin-top: -20px; margin-bottom: 20px;">
-        <span>→</span><span>→</span><span>→</span><span>→</span><span>→</span><span>→</span><span>→</span>
-    </div>
-    """, unsafe_allow_html=True)
-
+                 </div>
+                 """, unsafe_allow_html=True)
+ 
 
 def render_surface_activation(surfaces_touched: Dict[str, bool], trace_data: Dict[str, Any] = None):
     """Render the 4×2 Trust Surfaces grid"""
