@@ -363,8 +363,12 @@ with tab3:
                         approval.get("trace_id", "")
                     )
                     
-                    # Approval actions
+                    # Approval actions - Buttons in a row at the top
+                    # Create a container with unique ID for styling
+                    st.markdown(f'<div id="approval-actions-{idx}">', unsafe_allow_html=True)
+                    
                     col_approve, col_reject, col_cancel = st.columns(3)
+                    
                     with col_approve:
                         if st.button("✓ Approve", key=f"approve_{idx}", type="primary"):
                             approval["resolution"] = "APPROVED"
@@ -381,8 +385,8 @@ with tab3:
                             st.rerun()
                     
                     with col_reject:
-                        comment = st.text_input("Rejection Reason", key=f"reject_reason_{idx}")
                         if st.button("✗ Reject", key=f"reject_{idx}"):
+                            comment = st.session_state.get(f"reject_reason_{idx}", "")
                             approval["resolution"] = "REJECTED"
                             approval["rejected_by"] = "current_user"
                             approval["rejected_at"] = datetime.utcnow().isoformat() + "Z"
@@ -401,6 +405,25 @@ with tab3:
                         if st.button("Cancel", key=f"cancel_{idx}"):
                             st.session_state[f"reviewing_{idx}"] = False
                             st.rerun()
+                    
+                    # Rejection reason text input below the buttons
+                    comment = st.text_input("Rejection Reason", key=f"reject_reason_{idx}", placeholder="Enter reason for rejection (optional)")
+                    
+                    # Close container and inject CSS to style the Approve button as green
+                    st.markdown(f"""
+                    </div>
+                    <style>
+                    #approval-actions-{idx} div[data-testid="column"]:first-child button[kind="primary"] {{
+                        background-color: #28a745 !important;
+                        border-color: #28a745 !important;
+                        color: white !important;
+                    }}
+                    #approval-actions-{idx} div[data-testid="column"]:first-child button[kind="primary"]:hover {{
+                        background-color: #218838 !important;
+                        border-color: #1e7e34 !important;
+                    }}
+                    </style>
+                    """, unsafe_allow_html=True)
 
 
 # Tab 4: Audit Trail
