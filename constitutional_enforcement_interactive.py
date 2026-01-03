@@ -442,8 +442,27 @@ class ConstitutionalEnforcer:
     def _dlp_scan(self, content: Any) -> bool:
         """Stub: Return True if content passes DLP scan."""
         # In production: integrate with actual DLP service
-        sensitive_patterns = ["ssn:", "account_number:", "credit_card:"]
+        import re
         content_str = str(content).lower()
+        
+        # Pattern-based detection (more comprehensive)
+        sensitive_patterns = [
+            "ssn:", "account_number:", "credit_card:",
+            "ssn", "social security",
+            "account number", "account#",
+            "credit card", "cc#", "card number",
+            "routing number", "bank account",
+            "passport", "driver license", "dl#"
+        ]
+        
+        # SSN pattern (XXX-XX-XXXX)
+        ssn_pattern = r'\b\d{3}-\d{2}-\d{4}\b'
+        # Credit card pattern (rough)
+        cc_pattern = r'\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b'
+        
+        if re.search(ssn_pattern, content_str) or re.search(cc_pattern, content_str):
+            return False
+        
         return not any(p in content_str for p in sensitive_patterns)
     
     def _scrub_injections(self, content: Any) -> Any:
@@ -462,7 +481,15 @@ class ConstitutionalEnforcer:
             "disregard previous",
             "you are now",
             "new system prompt",
-            "jailbreak"
+            "jailbreak",
+            "ignore all",
+            "forget everything",
+            "override",
+            "system:",
+            "assistant:",
+            "you must",
+            "your real instructions",
+            "hidden instruction"
         ]
         text_lower = text.lower()
         return any(signal in text_lower for signal in injection_signals)
@@ -490,8 +517,24 @@ class ConstitutionalEnforcer:
     
     def _is_regulated_data(self, value: Any) -> bool:
         """Check if value contains regulated data types."""
+        import re
         value_str = str(value).lower()
-        regulated_signals = ["ssn", "account_number", "phi", "diagnosis", "patient"]
+        
+        regulated_signals = [
+            "ssn", "social security",
+            "account_number", "account number", "account#",
+            "phi", "protected health",
+            "diagnosis", "patient",
+            "credit card", "cc#",
+            "passport", "driver license",
+            "pii", "personally identifiable"
+        ]
+        
+        # SSN pattern
+        ssn_pattern = r'\b\d{3}-\d{2}-\d{4}\b'
+        if re.search(ssn_pattern, value_str):
+            return True
+        
         return any(signal in value_str for signal in regulated_signals)
 
 

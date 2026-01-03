@@ -6,6 +6,7 @@ Orchestrates execution through 8 gates and tracks Trust Surface activations
 import os
 import sys
 import time
+import re
 from typing import Dict, Any, List
 
 # Add parent directory to path for imports
@@ -43,6 +44,49 @@ def classify_intent(user_input: str) -> str:
         return "regulatory_query"
     else:
         return "general_query"
+
+
+def infer_tool_and_params(user_input: str, intent_category: str) -> tuple:
+    """
+    Infer which tool would be called and extract basic parameters from user input.
+    Returns (tool_name, params_dict) or (None, {}) if no tool can be inferred.
+    """
+    user_lower = user_input.lower()
+    
+    # Tool inference based on keywords and intent
+    if "jira" in user_lower or "issue" in user_lower or "ticket" in user_lower or intent_category == "task_management":
+        # Extract title and description from input
+        # Try to find quoted text as title
+        quoted = re.findall(r'"([^"]*)"', user_input)
+        title = quoted[0] if quoted else user_input[:50].strip()
+        description = user_input.replace(f'"{quoted[0]}"', '').strip() if quoted else user_input
+        return "jira_create", {"title": title, "description": description}
+    
+    elif "sharepoint" in user_lower or ("read" in user_lower and "document" in user_lower):
+        # Extract file path or document name
+        file_match = re.search(r'(?:file|document|path)[\s:]+([^\s,\.]+)', user_input, re.IGNORECASE)
+        file_path = file_match.group(1) if file_match else "document.pdf"
+        return "sharepoint_read", {"file_path": file_path}
+    
+    elif "occ" in user_lower or "fdic" in user_lower or ("query" in user_lower and "regulation" in user_lower):
+        # Extract query text
+        query = user_input.replace("query", "").replace("occ", "").replace("fdic", "").strip()
+        return "occ_query", {"query": query[:200]}
+    
+    elif any(word in user_lower for word in ["draft", "write", "create", "generate"]) and intent_category == "content_creation":
+        # Extract topic or subject
+        topic_keywords = ["about", "on", "topic", "subject"]
+        topic = user_input
+        for keyword in topic_keywords:
+            if keyword in user_lower:
+                parts = user_input.lower().split(keyword, 1)
+                if len(parts) > 1:
+                    topic = parts[1].strip()
+                    break
+        return "write_draft", {"topic": topic[:200], "content_type": "document"}
+    
+    # No tool inferred
+    return None, {}
 
 
 def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforcer) -> Dict[str, Any]:
@@ -199,84 +243,116 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
     }
     gate_results.append(gate4_result)
     
-    # Gate 5: Permission Check (simulate by checking if this would be a tool call)
-    # For demo purposes, we'll simulate a tool call scenario
+    # Gate 5 & 6: Permission Check and Action Approval
+    # Infer which tool would be called and run real enforcement
     start_time = time.time()
-    # Check what tools might be called based on intent
-    potential_tools = []
-    if intent_category == "information_retrieval":
-        potential_tools = ["sharepoint_read", "occ_query"]
-    elif intent_category == "content_creation":
-        potential_tools = ["write_draft"]
-    elif intent_category == "task_management":
-        potential_tools = ["jira_create"]
+    tool_name, tool_params = infer_tool_and_params(request, intent_category)
     
-    permission_results = {}
-    # Do a lightweight permission check
-    gate = enforcer.policy.get("gates", {}).get("S-O", {})
-    allowed_actions = [a.get("target") if isinstance(a, dict) else a for a in gate.get("allow", [])]
-    tool_mapping = {
-        "sharepoint_read": "sharepoint",
-        "occ_query": "occ_fdic_db",
-        "write_draft": "draft_doc",
-        "jira_create": "jira_create_task"
-    }
-    for tool in potential_tools:
-        mapped = tool_mapping.get(tool)
-        permission_results[tool] = mapped in allowed_actions if mapped else False
-        if mapped in allowed_actions:
-            surfaces_touched["S-O"] = True
-    
-    processing_time = (time.time() - start_time) * 1000
-    
-    gate5_result = {
-        "gate_num": 5,
-        "gate_name": "Permission Check",
-        "status": "passed",
-        "verdict": "ALLOW",
-        "signals": {
-            "potential_tools": potential_tools,
-            "permission_results": permission_results
-        },
-        "policies": applicable_policies,
-        "decision_reason": None,
-        "processing_time_ms": processing_time
-    }
-    gate_results.append(gate5_result)
-    
-    # Gate 6: Action Approval (final verdict)
-    start_time = time.time()
-    # Check if any tool would require approval
+    tool_enforcement_result = None
+    tool_decision = None
     requires_approval = False
-    for tool in potential_tools:
-        if tool == "jira_create":  # This one requires approval per policy
-            requires_approval = True
-            break
+    approval_required = False
     
-    if requires_approval:
-        verdict = "ESCALATE"
-        status = "escalated"
+    if tool_name:
+        # Gate 5: Permission Check - Actually call pre_tool_call enforcement
+        enforcement_result = enforcer.pre_tool_call(tool_name, tool_params, user_id)
+        tool_enforcement_result = enforcement_result
+        tool_decision = enforcement_result.decision
+        surfaces_touched["S-O"] = True
+        
+        processing_time_gate5 = (time.time() - start_time) * 1000
+        
+        gate5_result = {
+            "gate_num": 5,
+            "gate_name": "Permission Check",
+            "status": "passed" if enforcement_result.decision in [Decision.ALLOW, Decision.ALLOW_WITH_CONTROLS, Decision.REQUIRE_APPROVAL] else "failed",
+            "verdict": "ALLOW" if enforcement_result.decision in [Decision.ALLOW, Decision.ALLOW_WITH_CONTROLS] else ("ESCALATE" if enforcement_result.decision == Decision.REQUIRE_APPROVAL else "DENY"),
+            "signals": {
+                "tool": tool_name,
+                "tool_params": tool_params,
+                "decision": enforcement_result.decision.value if hasattr(enforcement_result.decision, 'value') else str(enforcement_result.decision),
+                "controls_applied": enforcement_result.controls_applied
+            },
+            "policies": applicable_policies,
+            "decision_reason": enforcement_result.denial_reason if enforcement_result.decision == Decision.DENY else None,
+            "processing_time_ms": processing_time_gate5
+        }
+        gate_results.append(gate5_result)
+        
+        # Gate 6: Action Approval - Use the enforcement decision
+        start_time_gate6 = time.time()
+        
+        if enforcement_result.decision == Decision.DENY:
+            verdict = "DENY"
+            status = "failed"
+            final_verdict = "DENY"
+        elif enforcement_result.decision == Decision.REQUIRE_APPROVAL:
+            verdict = "ESCALATE"
+            status = "escalated"
+            final_verdict = "ESCALATE"
+            requires_approval = True
+            approval_required = True
+        else:
+            verdict = "ALLOW"
+            status = "passed"
+            final_verdict = "ALLOW"
+        
+        processing_time_gate6 = (time.time() - start_time_gate6) * 1000
+        
+        gate6_result = {
+            "gate_num": 6,
+            "gate_name": "Action Approval",
+            "status": status,
+            "verdict": verdict,
+            "signals": {
+                "tool": tool_name,
+                "requires_approval": requires_approval,
+                "decision": enforcement_result.decision.value if hasattr(enforcement_result.decision, 'value') else str(enforcement_result.decision),
+                "controls_applied": enforcement_result.controls_applied
+            },
+            "policies": applicable_policies,
+            "decision_reason": enforcement_result.denial_reason if enforcement_result.decision == Decision.DENY else ("Human approval required" if requires_approval else None),
+            "processing_time_ms": processing_time_gate6
+        }
+        gate_results.append(gate6_result)
     else:
+        # No tool inferred - treat as informational query (ALLOW)
+        processing_time_gate5 = (time.time() - start_time) * 1000
+        
+        gate5_result = {
+            "gate_num": 5,
+            "gate_name": "Permission Check",
+            "status": "passed",
+            "verdict": "ALLOW",
+            "signals": {
+                "tool": None,
+                "note": "No tool call inferred - informational query"
+            },
+            "policies": applicable_policies,
+            "decision_reason": None,
+            "processing_time_ms": processing_time_gate5
+        }
+        gate_results.append(gate5_result)
+        
+        start_time_gate6 = time.time()
         verdict = "ALLOW"
         status = "passed"
-    
-    final_verdict = verdict
-    processing_time = (time.time() - start_time) * 1000
-    
-    gate6_result = {
-        "gate_num": 6,
-        "gate_name": "Action Approval",
-        "status": status,
-        "verdict": verdict,
-        "signals": {
-            "requires_approval": requires_approval,
-            "tools_requiring_approval": [t for t in potential_tools if t == "jira_create"]
-        },
-        "policies": applicable_policies,
-        "decision_reason": "Human approval required" if requires_approval else None,
-        "processing_time_ms": processing_time
-    }
-    gate_results.append(gate6_result)
+        final_verdict = "ALLOW"
+        processing_time_gate6 = (time.time() - start_time_gate6) * 1000
+        
+        gate6_result = {
+            "gate_num": 6,
+            "gate_name": "Action Approval",
+            "status": status,
+            "verdict": verdict,
+            "signals": {
+                "note": "No tool call - informational query allowed"
+            },
+            "policies": applicable_policies,
+            "decision_reason": None,
+            "processing_time_ms": processing_time_gate6
+        }
+        gate_results.append(gate6_result)
     
     # Gate 7: Evidence Capture
     start_time = time.time()
@@ -329,7 +405,7 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
     gate_results.append(gate8_result)
     
     # Check if response would go through U-O gate
-    if verdict == "ALLOW" or requires_approval:
+    if final_verdict == "ALLOW" or requires_approval:
         surfaces_touched["U-O"] = True
     
     return {
@@ -337,6 +413,14 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
         "surface_activations": surfaces_touched,
         "final_verdict": final_verdict,
         "evidence_packet": evidence_packet,
-        "short_circuited": False
+        "short_circuited": False,
+        "approval_required": approval_required,
+        "tool_enforcement_result": {
+            "tool": tool_name,
+            "params": tool_params,
+            "decision": tool_decision.value if tool_decision and hasattr(tool_decision, 'value') else (str(tool_decision) if tool_decision else None),
+            "controls_applied": tool_enforcement_result.controls_applied if tool_enforcement_result else [],
+            "evidence": tool_enforcement_result.evidence if tool_enforcement_result else {}
+        } if tool_enforcement_result else None
     }
 

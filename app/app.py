@@ -40,23 +40,68 @@ st.set_page_config(
 if "trace_manager" not in st.session_state:
     st.session_state.trace_manager = TraceManager()
 
-if "enforcer" not in st.session_state:
-    parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    policy_path = os.environ.get("POLICY_PATH", os.path.join(parent_dir, "policy_bank_compliance_v1.json"))
-    try:
-        st.session_state.enforcer = ConstitutionalEnforcer(policy_path)
-    except:
-        st.session_state.enforcer = None
-
 if "pending_approvals" not in st.session_state:
     st.session_state.pending_approvals = []
 
 if "current_trace_id" not in st.session_state:
     st.session_state.current_trace_id = None
 
+if "selected_policy" not in st.session_state:
+    st.session_state.selected_policy = None
+
+
+def get_policy_files():
+    """Get all JSON policy files from root directory"""
+    parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    policy_files = []
+    if os.path.exists(parent_dir):
+        for file in os.listdir(parent_dir):
+            if file.endswith('.json') and os.path.isfile(os.path.join(parent_dir, file)):
+                policy_files.append(file)
+    return sorted(policy_files)
+
+
+def load_policy_file(policy_filename: str):
+    """Load a policy file and create enforcer"""
+    parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    policy_path = os.path.join(parent_dir, policy_filename)
+    try:
+        return ConstitutionalEnforcer(policy_path)
+    except Exception as e:
+        st.error(f"Error loading policy {policy_filename}: {str(e)}")
+        return None
+
 
 def load_policy_summary():
     """Load policy summary for sidebar"""
+    # Policy selector
+    st.sidebar.markdown("### Policy Selection")
+    policy_files = get_policy_files()
+    
+    if not policy_files:
+        st.sidebar.error("No policy JSON files found in root directory")
+        return
+    
+    # Get current selection or default to first file
+    current_policy = st.session_state.get("selected_policy", policy_files[0] if policy_files else None)
+    selected_policy = st.sidebar.selectbox(
+        "Select Policy File",
+        options=policy_files,
+        index=policy_files.index(current_policy) if current_policy in policy_files else 0,
+        key="policy_selector"
+    )
+    
+    # Reload enforcer if policy changed
+    if selected_policy != st.session_state.get("selected_policy"):
+        st.session_state.selected_policy = selected_policy
+        st.session_state.enforcer = load_policy_file(selected_policy)
+        st.rerun()
+    
+    # Initialize enforcer if not already loaded
+    if "enforcer" not in st.session_state or st.session_state.enforcer is None:
+        st.session_state.enforcer = load_policy_file(selected_policy)
+        st.session_state.selected_policy = selected_policy
+    
     if st.session_state.enforcer:
         policy = st.session_state.enforcer.policy
         st.sidebar.markdown("### Policy Summary")
@@ -97,15 +142,18 @@ def process_sandbox_request(user_prompt: str, user_id: str = "analyst_123"):
         surface_activations=pipeline_results.get("surface_activations", {})
     )
     
-    # Check if escalation occurred
-    if pipeline_results.get("final_verdict") == "ESCALATE":
+    # Check if escalation occurred - use actual tool enforcement result
+    if pipeline_results.get("final_verdict") == "ESCALATE" and pipeline_results.get("tool_enforcement_result"):
+        tool_result = pipeline_results.get("tool_enforcement_result")
         approval_data = {
             "trace_id": trace.trace_id,
-            "tool": "jira_create",  # This would be determined from the pipeline
+            "tool": tool_result.get("tool"),
             "user_id": user_id,
             "timestamp": trace.timestamp,
-            "params": {"title": "Action requiring approval"},
-            "resolution": None
+            "params": tool_result.get("params", {}),
+            "resolution": None,
+            "controls_applied": tool_result.get("controls_applied", []),
+            "evidence": tool_result.get("evidence", {})
         }
         st.session_state.pending_approvals.append(approval_data)
     
@@ -265,12 +313,14 @@ with tab3:
         with col1:
             filter_tool = st.selectbox(
                 "Filter by Tool",
-                ["All"] + list(set(a.get("tool", "Unknown") for a in pending_approvals))
+                ["All"] + list(set(a.get("tool", "Unknown") for a in pending_approvals)),
+                key="approval_filter_tool"
             )
         with col2:
             filter_user = st.selectbox(
                 "Filter by User",
-                ["All"] + list(set(a.get("user_id", "Unknown") for a in pending_approvals))
+                ["All"] + list(set(a.get("user_id", "Unknown") for a in pending_approvals)),
+                key="approval_filter_user"
             )
         with col3:
             pass
@@ -373,20 +423,23 @@ with tab4:
         with col1:
             filter_verdict = st.selectbox(
                 "Filter by Verdict",
-                ["All"] + list(set(entry.get("decision", "Unknown") for entry in audit_log))
+                ["All"] + list(set(entry.get("decision", "Unknown") for entry in audit_log)),
+                key="audit_filter_verdict"
             )
         with col2:
             filter_gate = st.selectbox(
                 "Filter by Gate",
-                ["All"] + list(set(entry.get("gate", "Unknown") for entry in audit_log))
+                ["All"] + list(set(entry.get("gate", "Unknown") for entry in audit_log)),
+                key="audit_filter_gate"
             )
         with col3:
             filter_user = st.selectbox(
                 "Filter by User",
-                ["All"] + list(set(entry.get("user_id", "Unknown") for entry in audit_log))
+                ["All"] + list(set(entry.get("user_id", "Unknown") for entry in audit_log)),
+                key="audit_filter_user"
             )
         with col4:
-            days_back = st.selectbox("Time Range", [7, 30, 90, 365, "All"])
+            days_back = st.selectbox("Time Range", [7, 30, 90, 365, "All"], key="audit_time_range")
         
         # Apply filters
         filtered_log = audit_log
