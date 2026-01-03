@@ -375,6 +375,25 @@ with tab3:
                             approval["approved_by"] = "current_user"
                             approval["approved_at"] = datetime.utcnow().isoformat() + "Z"
                             
+                            # Log to audit trail
+                            enforcer = st.session_state.enforcer
+                            tool = approval.get("tool", "unknown_tool")
+                            evidence = {
+                                "trace_id": approval.get("trace_id"),
+                                "approval_timestamp": approval["approved_at"],
+                                "approver": "current_user",
+                                "tool": tool,
+                                "params": approval.get("params", {})
+                            }
+                            enforcer._log_audit(
+                                "S-O",
+                                tool,
+                                "APPROVED",
+                                "current_user",
+                                ["human_approval"],
+                                evidence
+                            )
+                            
                             trace_manager = st.session_state.trace_manager
                             trace = trace_manager.get_trace(approval.get("trace_id"))
                             if trace:
@@ -391,6 +410,26 @@ with tab3:
                             approval["rejected_by"] = "current_user"
                             approval["rejected_at"] = datetime.utcnow().isoformat() + "Z"
                             approval["rejection_reason"] = comment
+                            
+                            # Log to audit trail
+                            enforcer = st.session_state.enforcer
+                            tool = approval.get("tool", "unknown_tool")
+                            evidence = {
+                                "trace_id": approval.get("trace_id"),
+                                "rejection_timestamp": approval["rejected_at"],
+                                "rejector": "current_user",
+                                "tool": tool,
+                                "params": approval.get("params", {}),
+                                "rejection_reason": comment
+                            }
+                            enforcer._log_audit(
+                                "S-O",
+                                tool,
+                                "REJECTED",
+                                "current_user",
+                                ["human_rejection"],
+                                evidence
+                            )
                             
                             trace_manager = st.session_state.trace_manager
                             trace = trace_manager.get_trace(approval.get("trace_id"))
@@ -413,12 +452,16 @@ with tab3:
                     st.markdown(f"""
                     </div>
                     <style>
-                    #approval-actions-{idx} div[data-testid="column"]:first-child button[kind="primary"] {{
+                    button[data-testid="baseButton-approve_{idx}"] {{
                         background-color: #28a745 !important;
                         border-color: #28a745 !important;
                         color: white !important;
                     }}
-                    #approval-actions-{idx} div[data-testid="column"]:first-child button[kind="primary"]:hover {{
+                    button[data-testid="baseButton-approve_{idx}"]:hover {{
+                        background-color: #218838 !important;
+                        border-color: #1e7e34 !important;
+                    }}
+                    button[data-testid="baseButton-approve_{idx}"]:focus {{
                         background-color: #218838 !important;
                         border-color: #1e7e34 !important;
                     }}

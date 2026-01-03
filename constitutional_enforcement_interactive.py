@@ -74,6 +74,8 @@ class ConstitutionalEnforcer:
         
         mapped_target = tool_mapping.get(tool_name)
         if mapped_target not in allowed_actions:
+            controls_applied.append("allowlist_check")
+            self._log_audit("S-O", tool_name, "DENY", user_id, controls_applied, evidence)
             return EnforcementResult(
                 decision=Decision.DENY,
                 gate="S-O",
@@ -86,6 +88,8 @@ class ConstitutionalEnforcer:
         # Check hard denies
         for deny_pattern in gate["deny"]:
             if self._matches_deny(tool_name, params, deny_pattern):
+                controls_applied.append("deny_pattern_check")
+                self._log_audit("S-O", tool_name, "DENY", user_id, controls_applied, evidence)
                 return EnforcementResult(
                     decision=Decision.DENY,
                     gate="S-O",
@@ -98,6 +102,7 @@ class ConstitutionalEnforcer:
         action_config = next((a for a in gate["allow"] if isinstance(a, dict) and a.get("target") == mapped_target), None)
         if action_config and "approval_hitl" in action_config.get("controls", []):
             controls_applied.append("approval_hitl")
+            self._log_audit("S-O", tool_name, "REQUIRE_APPROVAL", user_id, controls_applied, evidence)
             return EnforcementResult(
                 decision=Decision.REQUIRE_APPROVAL,
                 gate="S-O",
@@ -140,6 +145,8 @@ class ConstitutionalEnforcer:
         if self._dlp_scan(result):
             controls_applied.append("dlp_scan_passed")
         else:
+            controls_applied.append("dlp_scan_failed")
+            self._log_audit("S-I", f"receive_{tool_name}_result", "DENY", user_id, controls_applied, evidence)
             return EnforcementResult(
                 decision=Decision.DENY,
                 gate="S-I",
@@ -180,6 +187,8 @@ class ConstitutionalEnforcer:
         
         # Injection detection
         if self._detect_injection(user_input):
+            controls_applied.append("injection_detect")
+            self._log_audit("U-I", "receive_input", "DENY", user_id, controls_applied, evidence)
             return EnforcementResult(
                 decision=Decision.DENY,
                 gate="U-I",
@@ -192,6 +201,8 @@ class ConstitutionalEnforcer:
         # Check for denied request patterns
         denied_patterns = ["export external", "share outside", "include customer data", "send to external"]
         if any(pattern in user_input.lower() for pattern in denied_patterns):
+            controls_applied.append("pattern_check")
+            self._log_audit("U-I", "receive_input", "DENY", user_id, controls_applied, evidence)
             return EnforcementResult(
                 decision=Decision.DENY,
                 gate="U-I",
