@@ -177,9 +177,9 @@ def render_surface_activation(surfaces_touched: Dict[str, bool], trace_data: Dic
         for gate_result in gate_results:
             gate_status = gate_result.get("status", "")
             gate_verdict = gate_result.get("verdict", "")
+            gate_num = gate_result.get("gate_num", 0)  # Extract gate_num before if/elif
             if gate_status == "escalated" or gate_verdict == "ESCALATE":
                 # Map gates to surfaces (simplified mapping)
-                gate_num = gate_result.get("gate_num", 0)
                 if gate_num <= 4:  # Pre-flight gates affect S-O, S-I
                     if "S-O" not in surface_statuses:
                         surface_statuses["S-O"] = "escalated"
