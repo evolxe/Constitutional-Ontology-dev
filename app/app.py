@@ -490,13 +490,13 @@ with nav_tab2:
                 filter_tool = st.selectbox(
                     "Filter by Tool",
                     ["All"] + list(set(a.get("tool", "Unknown") for a in pending_approvals)),
-                    key="approval_filter_tool"
+                    key="approval_filter_tool_tab2"
                 )
             with col2:
                 filter_user = st.selectbox(
                     "Filter by User",
                     ["All"] + list(set(a.get("user_id", "Unknown") for a in pending_approvals)),
-                    key="approval_filter_user"
+                    key="approval_filter_user_tab2"
                 )
             with col3:
                 pass
@@ -528,7 +528,7 @@ with nav_tab2:
                         render_verdict_badge("ESCALATE", approval.get("resolution"))
                     
                     with col4:
-                        if st.button("Review", key=f"review_{idx}"):
+                        if st.button("Review", key=f"review_tab2_{idx}"):
                             st.session_state[f"reviewing_{idx}"] = True
                     
                     # Approval modal with reason block
@@ -635,13 +635,13 @@ with nav_tab3:
             filter_tool = st.selectbox(
                 "Filter by Tool",
                 ["All"] + list(set(a.get("tool", "Unknown") for a in pending_approvals)),
-                key="approval_filter_tool"
+                key="approval_filter_tool_tab3"
             )
         with col2:
             filter_user = st.selectbox(
                 "Filter by User",
                 ["All"] + list(set(a.get("user_id", "Unknown") for a in pending_approvals)),
-                key="approval_filter_user"
+                key="approval_filter_user_tab3"
             )
         with col3:
             pass
@@ -673,7 +673,7 @@ with nav_tab3:
                     render_verdict_badge("ESCALATE", approval.get("resolution"))
                 
                 with col4:
-                    if st.button("Review", key=f"review_{idx}"):
+                    if st.button("Review", key=f"review_tab3_{idx}"):
                         st.session_state[f"reviewing_{idx}"] = True
                 
                 # Approval modal with reason block
