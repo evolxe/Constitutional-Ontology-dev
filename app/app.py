@@ -290,30 +290,56 @@ st.markdown("---")
 
 # Submit Request section - only show in ENFORCE mode
 if not st.session_state.simulate_mode:
-    with st.expander("Submit Request", expanded=False):
-        if not st.session_state.enforcer:
-            st.error("Please load a policy file first. Policy file should be in the parent directory.")
-        else:
-            user_input = st.text_area(
-                "User Prompt",
-                placeholder="e.g., Draft a Q4 compliance policy update under OCC supervision.",
-                height=100
-            )
-            
-            col1, col2 = st.columns([1, 4])
-            with col1:
-                submit_button = st.button("Submit Request", type="primary")
-            
-            if submit_button and user_input:
-                with st.spinner("Processing request through enforcement pipeline..."):
-                    trace = process_sandbox_request(user_input)
-                    if trace:
-                        st.session_state.current_trace_id = trace.trace_id
-                        st.success(f"**Trace ID:** `{trace.trace_id}`")
-                        st.rerun()
-            
-            elif submit_button and not user_input:
-                st.error("Please enter a user prompt before submitting.")
+    st.markdown("### Submit Request")
+    if not st.session_state.enforcer:
+        st.error("Please load a policy file first. Policy file should be in the parent directory.")
+    else:
+        # Canned prompts for demo
+        st.markdown("**Demo Prompts:**")
+        demo_col1, demo_col2, demo_col3 = st.columns(3)
+        
+        with demo_col1:
+            if st.button("What's the weather?", key="demo_weather", use_container_width=True):
+                st.session_state["user_prompt_input"] = "What's the weather?"
+                st.rerun()
+        
+        with demo_col2:
+            if st.button("Export customer PII", key="demo_export_pii", use_container_width=True):
+                st.session_state["user_prompt_input"] = "Export customer PII"
+                st.rerun()
+        
+        with demo_col3:
+            if st.button("Delete all records", key="demo_delete", use_container_width=True):
+                st.session_state["user_prompt_input"] = "Delete all records"
+                st.rerun()
+        
+        # Initialize session state for user prompt if not exists
+        if "user_prompt_input" not in st.session_state:
+            st.session_state["user_prompt_input"] = ""
+        
+        user_input = st.text_area(
+            "User Prompt",
+            placeholder="e.g., Draft a Q4 compliance policy update under OCC supervision.",
+            height=100,
+            key="user_prompt_input"
+        )
+        
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            submit_button = st.button("Submit Request", type="primary")
+        
+        if submit_button and user_input:
+            with st.spinner("Processing request through enforcement pipeline..."):
+                trace = process_sandbox_request(user_input)
+                if trace:
+                    st.session_state.current_trace_id = trace.trace_id
+                    st.success(f"**Trace ID:** `{trace.trace_id}`")
+                    st.rerun()
+        
+        elif submit_button and not user_input:
+            st.error("Please enter a user prompt before submitting.")
+    
+    st.markdown("---")
 
 # Get current trace data or use mock state
 current_trace = None

@@ -102,12 +102,16 @@
         {"action": "read", "target": "sharepoint"},
         {"action": "read", "target": "occ_fdic_db"},
         {"action": "write", "target": "draft_doc"},
-        {"action": "execute", "target": "jira_create_task"}
+        {"action": "execute", "target": "jira_create_task"},
+        {"action": "execute", "target": "export_data", "controls": ["approval_hitl", "log"]}
       ],
       "controls": [
         {"type": "log", "params": {"capture": ["tool_call", "params", "result"]}}
       ],
-      "deny": []
+      "deny": [
+        "delete_all_records",
+        "delete_records"
+      ]
     },
 
     "M-I": {

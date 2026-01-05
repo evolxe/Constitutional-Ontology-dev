@@ -72,7 +72,10 @@ class ConstitutionalEnforcer:
             "sharepoint_read": "sharepoint",
             "occ_query": "occ_fdic_db",
             "write_draft": "draft_doc",
-            "jira_create": "jira_create_task"
+            "jira_create": "jira_create_task",
+            "export_data": "export_data",
+            "delete_all_records": "delete_all_records",
+            "delete_records": "delete_records"
         }
         
         mapped_target = tool_mapping.get(tool_name)
@@ -594,6 +597,10 @@ class ConstitutionalEnforcer:
     
     def _matches_deny(self, tool: str, params: dict, pattern: str) -> bool:
         """Check if action matches a deny pattern."""
+        # Check if tool name matches deny pattern
+        if pattern.lower() in tool.lower() or tool.lower() in pattern.lower():
+            return True
+        
         # Simplified matching - expand for production
         if "external" in pattern and params.get("destination", "").startswith("external"):
             return True
