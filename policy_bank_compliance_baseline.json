@@ -33,6 +33,68 @@
   },
 
   "gates": {
+    "U-I": {
+      "name": "User Inbound", 
+      "direction": "user_to_agent",
+      "allow": [
+        "receive_instructions",
+        "receive_feedback",
+        "receive_edits"
+      ],
+      "controls": [
+        {"type": "auth", "params": {"method": "sso", "session_binding": true}},
+        {"type": "scope_lock", "params": {"bind_to": "working_doc_ids"}},
+        {"type": "injection_detect", "params": {"scan_pasted_text": true}},
+        {"type": "log", "params": {"capture": ["user_id", "request_type", "timestamp"]}}
+      ],
+      "deny": [
+        "request_export_external",
+        "request_include_customer_data"
+      ]
+    },
+
+    "U-O": {
+      "name": "User Outbound",
+      "direction": "agent_to_user", 
+      "allow": [
+        "present_drafts",
+        "ask_clarifying_questions",
+        "show_citations",
+        "notify_task_created"
+      ],
+      "controls": [
+        {"type": "provenance_required", "params": {"apply_to": "regulatory_claims"}},
+        {"type": "no_deception", "params": {"disclose_limitations": true}},
+        {"type": "redaction", "params": {"strip": ["customer_data", "regulated_data"]}},
+        {"type": "log", "params": {"capture": ["response", "citations"]}}
+      ],
+      "deny": [
+        "share_to_external_recipients",
+        "claims_without_citations"
+      ]
+    },
+
+    "S-I": {
+      "name": "System Inbound",
+      "direction": "system_to_agent",
+      "allow": [
+        "receive_sharepoint_docs",
+        "receive_occ_fdic_text"
+      ],
+      "controls": [
+        {"type": "provenance_required", "params": {"capture": ["source_uri", "doc_hash", "retrieval_timestamp"]}},
+        {"type": "malware_scan"},
+        {"type": "dlp_scan"},
+        {"type": "injection_scrub", "params": {"strip_hidden_instructions": true}},
+        {"type": "log", "params": {"events": ["retrieval_event", "query"]}}
+      ],
+      "deny": [
+        "files_with_macros",
+        "files_with_executables", 
+        "sources_not_on_allowlist"
+      ]
+    },
+
     "S-O": {
       "name": "System Outbound",
       "direction": "agent_to_system",
@@ -46,6 +108,67 @@
         {"type": "log", "params": {"capture": ["tool_call", "params", "result"]}}
       ],
       "deny": []
+    },
+
+    "M-I": {
+      "name": "Memory Inbound",
+      "direction": "memory_to_agent",
+      "allow": [
+        "retrieve_writing_style",
+        "retrieve_citation_format", 
+        "retrieve_templates"
+      ],
+      "controls": [
+        {"type": "data_minimization"},
+        {"type": "acl", "params": {"scope": "per_user"}},
+        {"type": "log", "params": {"capture": ["what_retrieved"]}},
+        {"type": "versioning", "params": {"track_template_provenance": true}}
+      ],
+      "deny": [
+        "retrieve_regulated_data",
+        "cross_user_memory_access"
+      ]
+    },
+
+    "M-O": {
+      "name": "Memory Outbound",
+      "direction": "agent_to_memory",
+      "allow": [
+        "store_citation_format",
+        "store_templates",
+        "store_style_prefs"
+      ],
+      "controls": [
+        {"type": "user_controls", "params": {"allow": ["view", "edit", "delete"]}},
+        {"type": "retention_policy", "params": {"max_days": 365, "review_required": true}},
+        {"type": "encryption", "params": {"at_rest": true}},
+        {"type": "redaction", "params": {"apply_before_store": true}},
+        {"type": "log"}
+      ],
+      "deny": [
+        "store_pii",
+        "store_phi", 
+        "store_customer_account_info",
+        "store_full_document_contents"
+      ]
+    },
+
+    "A-I": {
+      "name": "Agent Inbound",
+      "direction": "other_agent_to_agent",
+      "allow": [],
+      "controls": [],
+      "deny": ["*"],
+      "deny_reason": "Inter-agent communication disabled at L1"
+    },
+
+    "A-O": {
+      "name": "Agent Outbound", 
+      "direction": "agent_to_other_agent",
+      "allow": [],
+      "controls": [],
+      "deny": ["*"],
+      "deny_reason": "Inter-agent communication disabled at L1"
     }
   },
 

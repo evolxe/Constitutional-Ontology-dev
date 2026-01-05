@@ -288,6 +288,33 @@ with header_col2:
 
 st.markdown("---")
 
+# Submit Request section - only show in ENFORCE mode
+if not st.session_state.simulate_mode:
+    with st.expander("Submit Request", expanded=False):
+        if not st.session_state.enforcer:
+            st.error("Please load a policy file first. Policy file should be in the parent directory.")
+        else:
+            user_input = st.text_area(
+                "User Prompt",
+                placeholder="e.g., Draft a Q4 compliance policy update under OCC supervision.",
+                height=100
+            )
+            
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                submit_button = st.button("Submit Request", type="primary")
+            
+            if submit_button and user_input:
+                with st.spinner("Processing request through enforcement pipeline..."):
+                    trace = process_sandbox_request(user_input)
+                    if trace:
+                        st.session_state.current_trace_id = trace.trace_id
+                        st.success(f"**Trace ID:** `{trace.trace_id}`")
+                        st.rerun()
+            
+            elif submit_button and not user_input:
+                st.error("Please enter a user prompt before submitting.")
+
 # Get current trace data or use mock state
 current_trace = None
 trace_dict = None
@@ -305,7 +332,7 @@ if st.session_state.current_trace_id:
             }
         }
 elif st.session_state.simulate_mode:
-    # Use mock state in simulate mode
+    # Use mock state in simulate mode only
     current_trace, mock_approval_data, mock_pending_approvals = get_mock_state()
     trace_dict = {
         "trace_id": current_trace.trace_id,
