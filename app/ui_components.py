@@ -693,11 +693,18 @@ def render_surface_activation_compact(surfaces_touched: Dict[str, bool], trace_d
         [("A-I", "Agent"), ("A-O", "Agent")]
     ]
     
-    # Create 2x4 grid
+    # Create grid with row labels: Label | Surface 1 | Surface 2
     for row in surface_grid:
-        cols = st.columns(2)
-        for idx, (surface_id, surface_type) in enumerate(row):
-            with cols[idx]:
+        cols = st.columns([1, 1, 1])
+        surface_type = row[0][1]  # Get the type (User, System, Memory, Agent)
+        
+        # Column 1: Row label
+        with cols[0]:
+            st.write(surface_type)
+        
+        # Columns 2-3: Surface buttons
+        for idx, (surface_id, _) in enumerate(row):
+            with cols[idx + 1]:
                 activated = surfaces_touched.get(surface_id, False)
                 if activated:
                     st.success(f"**{surface_id}**")
