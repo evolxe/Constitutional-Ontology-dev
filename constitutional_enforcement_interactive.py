@@ -63,8 +63,11 @@ class ConstitutionalEnforcer:
         controls_applied = []
         evidence = {"tool": tool_name, "params_hash": hash(str(params)), "timestamp": self._now()}
         
-        # Check allowlist
-        allowed_actions = [a["target"] if isinstance(a, dict) else a for a in gate["allow"]]
+        # Get control types from policy
+        control_types = [c["type"] if isinstance(c, dict) else c for c in gate.get("controls", [])]
+        
+        # Check allowlist from policy
+        allowed_actions = [a["target"] if isinstance(a, dict) else a for a in gate.get("allow", [])]
         tool_mapping = {
             "sharepoint_read": "sharepoint",
             "occ_query": "occ_fdic_db",
@@ -85,8 +88,8 @@ class ConstitutionalEnforcer:
             )
         controls_applied.append("allowlist_check")
         
-        # Check hard denies
-        for deny_pattern in gate["deny"]:
+        # Check deny patterns from policy
+        for deny_pattern in gate.get("deny", []):
             if self._matches_deny(tool_name, params, deny_pattern):
                 controls_applied.append("deny_pattern_check")
                 self._log_audit("S-O", tool_name, "DENY", user_id, controls_applied, evidence)
@@ -98,8 +101,8 @@ class ConstitutionalEnforcer:
                     evidence=evidence
                 )
         
-        # Check if approval required (Execute actions)
-        action_config = next((a for a in gate["allow"] if isinstance(a, dict) and a.get("target") == mapped_target), None)
+        # Check if approval required (Execute actions) - from allow action config
+        action_config = next((a for a in gate.get("allow", []) if isinstance(a, dict) and a.get("target") == mapped_target), None)
         if action_config and "approval_hitl" in action_config.get("controls", []):
             controls_applied.append("approval_hitl")
             self._log_audit("S-O", tool_name, "REQUIRE_APPROVAL", user_id, controls_applied, evidence)
@@ -112,8 +115,18 @@ class ConstitutionalEnforcer:
                 requires_human=True
             )
         
-        # Apply logging
-        controls_applied.append("log")
+        # Least privilege (if control exists in policy)
+        if "least_privilege" in control_types:
+            controls_applied.append("least_privilege")
+        
+        # Sandbox (if control exists in policy)
+        if "sandbox" in control_types:
+            controls_applied.append("sandbox")
+        
+        # Logging (if control exists in policy)
+        if "log" in control_types:
+            controls_applied.append("log")
+        
         self._log_audit("S-O", tool_name, "ALLOW", user_id, controls_applied, evidence)
         
         return EnforcementResult(
@@ -136,30 +149,57 @@ class ConstitutionalEnforcer:
         controls_applied = []
         evidence = {"tool": tool_name, "result_hash": hash(str(result)[:1000]), "timestamp": self._now()}
         
-        # Provenance capture
-        evidence["source_uri"] = f"tool://{tool_name}"
-        evidence["retrieval_timestamp"] = self._now()
-        controls_applied.append("provenance_required")
+        # Get control types from policy
+        control_types = [c["type"] if isinstance(c, dict) else c for c in gate.get("controls", [])]
         
-        # DLP scan (stub - would integrate with actual DLP)
-        if self._dlp_scan(result):
-            controls_applied.append("dlp_scan_passed")
-        else:
-            controls_applied.append("dlp_scan_failed")
-            self._log_audit("S-I", f"receive_{tool_name}_result", "DENY", user_id, controls_applied, evidence)
-            return EnforcementResult(
-                decision=Decision.DENY,
-                gate="S-I",
-                action=f"receive_{tool_name}_result",
-                denial_reason="DLP scan detected sensitive data in response",
-                evidence=evidence
-            )
+        # Check deny patterns from policy
+        for deny_pattern in gate.get("deny", []):
+            if self._matches_deny_result(result, tool_name, deny_pattern):
+                controls_applied.append("deny_pattern_check")
+                self._log_audit("S-I", f"receive_{tool_name}_result", "DENY", user_id, controls_applied, evidence)
+                return EnforcementResult(
+                    decision=Decision.DENY,
+                    gate="S-I",
+                    action=f"receive_{tool_name}_result",
+                    denial_reason=f"Result matches denied pattern: {deny_pattern}",
+                    evidence=evidence
+                )
         
-        # Injection scrub (stub)
-        result = self._scrub_injections(result)
-        controls_applied.append("injection_scrub")
+        # Provenance capture (if control exists in policy)
+        if "provenance_required" in control_types:
+            evidence["source_uri"] = f"tool://{tool_name}"
+            evidence["retrieval_timestamp"] = self._now()
+            controls_applied.append("provenance_required")
         
-        controls_applied.append("log")
+        # Malware scan (if control exists in policy)
+        if "malware_scan" in control_types:
+            controls_applied.append("malware_scan")
+            # Stub - assumes scan passes
+        
+        # DLP scan (if control exists in policy)
+        if "dlp_scan" in control_types:
+            if self._dlp_scan(result):
+                controls_applied.append("dlp_scan")
+            else:
+                controls_applied.append("dlp_scan_failed")
+                self._log_audit("S-I", f"receive_{tool_name}_result", "DENY", user_id, controls_applied, evidence)
+                return EnforcementResult(
+                    decision=Decision.DENY,
+                    gate="S-I",
+                    action=f"receive_{tool_name}_result",
+                    denial_reason="DLP scan detected sensitive data in response",
+                    evidence=evidence
+                )
+        
+        # Injection scrub (if control exists in policy)
+        if "injection_scrub" in control_types:
+            result = self._scrub_injections(result)
+            controls_applied.append("injection_scrub")
+        
+        # Logging (if control exists in policy)
+        if "log" in control_types:
+            controls_applied.append("log")
+        
         self._log_audit("S-I", f"receive_{tool_name}", "ALLOW", user_id, controls_applied, evidence)
         
         return EnforcementResult(
@@ -182,36 +222,49 @@ class ConstitutionalEnforcer:
         controls_applied = []
         evidence = {"input_hash": hash(user_input), "session": session_id, "timestamp": self._now()}
         
-        # Auth validation (stub - assumes upstream auth)
-        controls_applied.append("auth_validated")
+        # Get control types from policy
+        control_types = [c["type"] if isinstance(c, dict) else c for c in gate.get("controls", [])]
         
-        # Injection detection
-        if self._detect_injection(user_input):
+        # Auth validation (if control exists in policy)
+        if "auth" in control_types:
+            controls_applied.append("auth")
+            # Stub - assumes upstream auth validation
+        
+        # Injection detection (if control exists in policy)
+        if "injection_detect" in control_types:
+            if self._detect_injection(user_input):
+                controls_applied.append("injection_detect")
+                self._log_audit("U-I", "receive_input", "DENY", user_id, controls_applied, evidence)
+                return EnforcementResult(
+                    decision=Decision.DENY,
+                    gate="U-I",
+                    action="receive_input",
+                    denial_reason="Potential prompt injection detected",
+                    evidence=evidence
+                )
             controls_applied.append("injection_detect")
-            self._log_audit("U-I", "receive_input", "DENY", user_id, controls_applied, evidence)
-            return EnforcementResult(
-                decision=Decision.DENY,
-                gate="U-I",
-                action="receive_input",
-                denial_reason="Potential prompt injection detected",
-                evidence=evidence
-            )
-        controls_applied.append("injection_detect")
         
-        # Check for denied request patterns
-        denied_patterns = ["export external", "share outside", "include customer data", "send to external"]
-        if any(pattern in user_input.lower() for pattern in denied_patterns):
-            controls_applied.append("pattern_check")
-            self._log_audit("U-I", "receive_input", "DENY", user_id, controls_applied, evidence)
-            return EnforcementResult(
-                decision=Decision.DENY,
-                gate="U-I",
-                action="receive_input",
-                denial_reason="Request matches denied action pattern",
-                evidence=evidence
-            )
+        # Check for denied request patterns from policy
+        for deny_pattern in gate.get("deny", []):
+            if self._matches_deny_pattern(user_input, deny_pattern):
+                controls_applied.append("deny_pattern_check")
+                self._log_audit("U-I", "receive_input", "DENY", user_id, controls_applied, evidence)
+                return EnforcementResult(
+                    decision=Decision.DENY,
+                    gate="U-I",
+                    action="receive_input",
+                    denial_reason=f"Request matches denied pattern: {deny_pattern}",
+                    evidence=evidence
+                )
         
-        controls_applied.append("log")
+        # Scope lock (if control exists in policy)
+        if "scope_lock" in control_types:
+            controls_applied.append("scope_lock")
+        
+        # Logging (if control exists in policy)
+        if "log" in control_types:
+            controls_applied.append("log")
+        
         self._log_audit("U-I", "receive_input", "ALLOW", user_id, controls_applied, evidence)
         
         return EnforcementResult(
@@ -234,27 +287,50 @@ class ConstitutionalEnforcer:
         controls_applied = []
         evidence = {"response_hash": hash(response[:500]), "citation_count": len(citations), "timestamp": self._now()}
         
-        # Redaction (stub - would integrate with PII detector)
-        response, redactions = self._redact_sensitive(response)
-        if redactions:
-            evidence["redactions_applied"] = redactions
-        controls_applied.append("redaction")
+        # Get control types from policy
+        control_types = [c["type"] if isinstance(c, dict) else c for c in gate.get("controls", [])]
         
-        # Provenance check for regulatory claims
-        if self._contains_regulatory_claim(response) and not citations:
-            return EnforcementResult(
-                decision=Decision.DENY,
-                gate="U-O",
-                action="send_response",
-                denial_reason="Regulatory claim without citation (ProvenanceRequired)",
-                evidence=evidence
-            )
-        controls_applied.append("provenance_required")
+        # Check deny patterns from policy
+        for deny_pattern in gate.get("deny", []):
+            if self._matches_deny_response(response, citations, deny_pattern):
+                controls_applied.append("deny_pattern_check")
+                self._log_audit("U-O", "send_response", "DENY", user_id, controls_applied, evidence)
+                return EnforcementResult(
+                    decision=Decision.DENY,
+                    gate="U-O",
+                    action="send_response",
+                    denial_reason=f"Response matches denied pattern: {deny_pattern}",
+                    evidence=evidence
+                )
         
-        # NoDeception - ensure limitations disclosed if applicable
-        controls_applied.append("no_deception")
+        # Redaction (if control exists in policy)
+        if "redaction" in control_types:
+            response, redactions = self._redact_sensitive(response)
+            if redactions:
+                evidence["redactions_applied"] = redactions
+            controls_applied.append("redaction")
         
-        controls_applied.append("log")
+        # Provenance check for regulatory claims (if control exists in policy)
+        if "provenance_required" in control_types:
+            if self._contains_regulatory_claim(response) and not citations:
+                self._log_audit("U-O", "send_response", "DENY", user_id, controls_applied, evidence)
+                return EnforcementResult(
+                    decision=Decision.DENY,
+                    gate="U-O",
+                    action="send_response",
+                    denial_reason="Regulatory claim without citation (ProvenanceRequired)",
+                    evidence=evidence
+                )
+            controls_applied.append("provenance_required")
+        
+        # NoDeception - ensure limitations disclosed if applicable (if control exists in policy)
+        if "no_deception" in control_types:
+            controls_applied.append("no_deception")
+        
+        # Logging (if control exists in policy)
+        if "log" in control_types:
+            controls_applied.append("log")
+        
         evidence["citations"] = [c.get("source", "unknown") for c in citations] if citations else []
         self._log_audit("U-O", "send_response", "ALLOW", user_id, controls_applied, evidence)
         
@@ -278,37 +354,68 @@ class ConstitutionalEnforcer:
         controls_applied = []
         evidence = {"key": key, "value_type": type(value).__name__, "timestamp": self._now()}
         
-        # Check denied data types
-        if self._is_regulated_data(value):
+        # Get control types from policy
+        control_types = [c["type"] if isinstance(c, dict) else c for c in gate.get("controls", [])]
+        
+        # Check deny patterns from policy
+        for deny_pattern in gate.get("deny", []):
+            if self._matches_deny_memory(key, value, deny_pattern):
+                controls_applied.append("deny_pattern_check")
+                self._log_audit("M-O", "store", "DENY", user_id, controls_applied, evidence)
+                return EnforcementResult(
+                    decision=Decision.DENY,
+                    gate="M-O",
+                    action="store",
+                    denial_reason=f"Storage matches denied pattern: {deny_pattern}",
+                    evidence=evidence
+                )
+        
+        # Check allowed storage types from policy
+        allowed_actions = gate.get("allow", [])
+        key_matches_allowed = False
+        for allowed in allowed_actions:
+            # Match key against allowed patterns (e.g., "store_citation_format" -> "citation_format")
+            if allowed.replace("store_", "") in key.lower() or key.lower() in allowed.lower():
+                key_matches_allowed = True
+                break
+        
+        if not key_matches_allowed:
+            self._log_audit("M-O", "store", "DENY", user_id, controls_applied, evidence)
             return EnforcementResult(
                 decision=Decision.DENY,
                 gate="M-O",
                 action="store",
-                denial_reason="Cannot store PII/PHI/regulated data",
+                denial_reason=f"Storage key '{key}' not in allowed list: {allowed_actions}",
                 evidence=evidence
             )
         
-        # Check allowed storage types
-        allowed_keys = ["citation_format", "templates", "style_prefs", "writing_style"]
-        if not any(allowed in key.lower() for allowed in allowed_keys):
-            return EnforcementResult(
-                decision=Decision.DENY,
-                gate="M-O",
-                action="store",
-                denial_reason=f"Storage key '{key}' not in allowed preferences list",
-                evidence=evidence
-            )
+        # User controls (if control exists in policy)
+        if "user_controls" in control_types:
+            controls_applied.append("user_controls")
+            evidence["user_controlled"] = True
         
-        # Apply redaction before store
-        value, redactions = self._redact_sensitive(str(value))
-        controls_applied.append("redaction")
+        # Redaction before store (if control exists in policy)
+        if "redaction" in control_types:
+            value, redactions = self._redact_sensitive(str(value))
+            if redactions:
+                evidence["redactions_applied"] = redactions
+            controls_applied.append("redaction")
         
-        # Tag with retention policy
-        evidence["retention_days"] = 365
-        evidence["user_controlled"] = True
-        controls_applied.extend(["retention_policy", "encryption", "user_controls"])
+        # Retention policy (if control exists in policy)
+        if "retention_policy" in control_types:
+            retention_control = next((c for c in gate.get("controls", []) if isinstance(c, dict) and c.get("type") == "retention_policy"), None)
+            if retention_control and "params" in retention_control:
+                evidence["retention_days"] = retention_control["params"].get("max_days", 365)
+            controls_applied.append("retention_policy")
         
-        controls_applied.append("log")
+        # Encryption (if control exists in policy)
+        if "encryption" in control_types:
+            controls_applied.append("encryption")
+        
+        # Logging (if control exists in policy)
+        if "log" in control_types:
+            controls_applied.append("log")
+        
         self._log_audit("M-O", "store", "ALLOW", user_id, controls_applied, evidence)
         
         return EnforcementResult(
@@ -331,21 +438,66 @@ class ConstitutionalEnforcer:
         controls_applied = []
         evidence = {"key": key, "timestamp": self._now()}
         
-        # Per-user ACL check
-        if user_id != requesting_user:
+        # Get control types from policy
+        control_types = [c["type"] if isinstance(c, dict) else c for c in gate.get("controls", [])]
+        
+        # Check deny patterns from policy
+        for deny_pattern in gate.get("deny", []):
+            if self._matches_deny_memory_read(key, user_id, requesting_user, deny_pattern):
+                controls_applied.append("deny_pattern_check")
+                self._log_audit("M-I", "retrieve", "DENY", user_id, controls_applied, evidence)
+                return EnforcementResult(
+                    decision=Decision.DENY,
+                    gate="M-I",
+                    action="retrieve",
+                    denial_reason=f"Retrieval matches denied pattern: {deny_pattern}",
+                    evidence=evidence
+                )
+        
+        # Check allowed retrieval types from policy
+        allowed_actions = gate.get("allow", [])
+        key_matches_allowed = False
+        for allowed in allowed_actions:
+            if allowed.replace("retrieve_", "") in key.lower() or key.lower() in allowed.lower():
+                key_matches_allowed = True
+                break
+        
+        if not key_matches_allowed:
+            self._log_audit("M-I", "retrieve", "DENY", user_id, controls_applied, evidence)
             return EnforcementResult(
                 decision=Decision.DENY,
                 gate="M-I",
                 action="retrieve",
-                denial_reason="Cross-user memory access denied",
+                denial_reason=f"Retrieval key '{key}' not in allowed list: {allowed_actions}",
                 evidence=evidence
             )
-        controls_applied.append("per_user_acl")
         
-        # Data minimization (return only what's needed)
-        controls_applied.append("data_minimization")
+        # Per-user ACL check (if control exists in policy)
+        if "acl" in control_types:
+            if user_id != requesting_user:
+                controls_applied.append("acl_check_failed")
+                self._log_audit("M-I", "retrieve", "DENY", user_id, controls_applied, evidence)
+                return EnforcementResult(
+                    decision=Decision.DENY,
+                    gate="M-I",
+                    action="retrieve",
+                    denial_reason="Cross-user memory access denied",
+                    evidence=evidence
+                )
+            controls_applied.append("acl")
         
-        controls_applied.append("log")
+        # Data minimization (if control exists in policy)
+        if "data_minimization" in control_types:
+            controls_applied.append("data_minimization")
+        
+        # Versioning (if control exists in policy)
+        if "versioning" in control_types:
+            controls_applied.append("versioning")
+        
+        # Logging (if control exists in policy)
+        if "log" in control_types:
+            controls_applied.append("log")
+        
         self._log_audit("M-I", "retrieve", "ALLOW", user_id, controls_applied, evidence)
         
         return EnforcementResult(
@@ -449,6 +601,87 @@ class ConstitutionalEnforcer:
             if params.get("destination", "").lower().startswith("final"):
                 return True
         return False
+    
+    def _matches_deny_pattern(self, user_input: str, pattern: str) -> bool:
+        """Check if user input matches a deny pattern from policy."""
+        user_input_lower = user_input.lower()
+        pattern_lower = pattern.lower()
+        
+        # Direct pattern matching
+        if pattern_lower in user_input_lower:
+            return True
+        
+        # Common mappings for U-I deny patterns
+        pattern_mappings = {
+            "request_export_external": ["export external", "share outside", "send to external", "export outside"],
+            "request_include_customer_data": ["include customer data", "add customer data", "use customer info"]
+        }
+        
+        if pattern in pattern_mappings:
+            return any(mapping in user_input_lower for mapping in pattern_mappings[pattern])
+        
+        return False
+    
+    def _matches_deny_result(self, result: Any, tool_name: str, pattern: str) -> bool:
+        """Check if tool result matches a deny pattern from policy."""
+        result_str = str(result).lower()
+        pattern_lower = pattern.lower()
+        
+        # Check for macros or executables in result metadata
+        if "files_with_macros" == pattern or "files_with_executables" == pattern:
+            # Stub - would check actual file metadata
+            return False
+        
+        if "sources_not_on_allowlist" == pattern:
+            # Already checked via allowlist, but verify here
+            return False
+        
+        return pattern_lower in result_str
+    
+    def _matches_deny_response(self, response: str, citations: list, pattern: str) -> bool:
+        """Check if response matches a deny pattern from policy."""
+        response_lower = response.lower()
+        pattern_lower = pattern.lower()
+        
+        if pattern == "share_to_external_recipients":
+            # Would check recipient list - stub
+            return False
+        
+        if pattern == "claims_without_citations":
+            # Checked separately via provenance_required control
+            return False
+        
+        return pattern_lower in response_lower
+    
+    def _matches_deny_memory(self, key: str, value: Any, pattern: str) -> bool:
+        """Check if memory write matches a deny pattern from policy."""
+        key_lower = key.lower()
+        value_str = str(value).lower()
+        pattern_lower = pattern.lower()
+        
+        # Map deny patterns to detection logic
+        if pattern in ["store_pii", "store_phi", "store_customer_account_info"]:
+            return self._is_regulated_data(value)
+        
+        if pattern == "store_full_document_contents":
+            # Would check value size/content type - stub
+            return False
+        
+        return pattern_lower in key_lower or pattern_lower in value_str
+    
+    def _matches_deny_memory_read(self, key: str, user_id: str, requesting_user: str, pattern: str) -> bool:
+        """Check if memory read matches a deny pattern from policy."""
+        key_lower = key.lower()
+        pattern_lower = pattern.lower()
+        
+        if pattern == "retrieve_regulated_data":
+            # Would check if key contains regulated data - stub
+            return False
+        
+        if pattern == "cross_user_memory_access":
+            return user_id != requesting_user
+        
+        return pattern_lower in key_lower
     
     def _dlp_scan(self, content: Any) -> bool:
         """Stub: Return True if content passes DLP scan."""

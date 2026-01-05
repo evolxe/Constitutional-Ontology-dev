@@ -24,7 +24,13 @@ from ui_components import (
     render_surface_activation,
     render_approval_modal,
     render_verdict_badge,
-    get_gate_legend
+    get_gate_legend,
+    render_cognitive_onramp,
+    render_enforcement_pipeline_enhanced,
+    render_escalation_details,
+    render_policy_diff,
+    render_surface_activation_compact,
+    render_approval_queue_compact
 )
 
 
@@ -48,6 +54,12 @@ if "current_trace_id" not in st.session_state:
 
 if "selected_policy" not in st.session_state:
     st.session_state.selected_policy = None
+
+if "simulate_mode" not in st.session_state:
+    st.session_state.simulate_mode = True
+
+if "nav_tab" not in st.session_state:
+    st.session_state.nav_tab = "Pipeline Trace"
 
 
 def get_policy_files():
@@ -124,6 +136,82 @@ def load_policy_summary():
         st.sidebar.error("No policy loaded")
 
 
+def get_mock_state():
+    """Generate mock state data for simulate mode"""
+    from trace_manager import TraceData
+    
+    # Mock gate results matching the UI
+    gate_results = [
+        {"gate_num": 1, "gate_name": "Input Validation", "status": "passed", "verdict": "ALLOW", "signals": {}, "policies": [], "decision_reason": None, "processing_time_ms": 5.2},
+        {"gate_num": 2, "gate_name": "Intent Classification", "status": "passed", "verdict": "ALLOW", "signals": {"intent_category": "task_management"}, "policies": [], "decision_reason": None, "processing_time_ms": 3.1},
+        {"gate_num": 3, "gate_name": "Data Classification", "status": "passed", "verdict": "ALLOW", "signals": {"has_pii": False, "dlp_scan_passed": True}, "policies": [], "decision_reason": None, "processing_time_ms": 8.5},
+        {"gate_num": 4, "gate_name": "Policy Lookup", "status": "passed", "verdict": "ALLOW", "signals": {"applicable_policies": ["OCC_MRM_v0"]}, "policies": ["OCC_MRM_v0"], "decision_reason": None, "processing_time_ms": 2.3},
+        {"gate_num": 5, "gate_name": "Permission Check", "status": "passed", "verdict": "ALLOW", "signals": {"tool": "jira_create"}, "policies": ["OCC_MRM_v0"], "decision_reason": None, "processing_time_ms": 4.7},
+        {"gate_num": 6, "gate_name": "Action Approval", "status": "escalated", "verdict": "ESCALATE", "signals": {"tool": "jira_create", "requires_approval": True}, "policies": ["OCC_MRM_v0"], "decision_reason": "requires_human_approval", "processing_time_ms": 6.1},
+        {"gate_num": 7, "gate_name": "Evidence Capture", "status": "pending", "verdict": None, "signals": {}, "policies": [], "decision_reason": None, "processing_time_ms": 0},
+        {"gate_num": 8, "gate_name": "Audit Export", "status": "pending", "verdict": None, "signals": {}, "policies": [], "decision_reason": None, "processing_time_ms": 0}
+    ]
+    
+    # Mock surface activations matching UI: U-I, U-O, S-O are green/active
+    surface_activations = {
+        "U-I": True,   # User Inbound - active (green)
+        "U-O": True,   # User Outbound - active (green)
+        "S-I": False,  # System Inbound - inactive (gray)
+        "S-O": True,   # System Outbound - active (green)
+        "M-I": False,  # Memory Inbound - inactive (gray)
+        "M-O": False,  # Memory Outbound - inactive (gray)
+        "A-I": False,  # Agent Inbound - inactive (gray)
+        "A-O": False   # Agent Outbound - inactive (gray)
+    }
+    
+    # Create mock trace
+    mock_trace = TraceData(
+        trace_id="abc-123-def",
+        timestamp=datetime.utcnow().isoformat() + "Z",
+        request_data={"prompt": "Create a Jira task for Q4 compliance review", "user_id": "analyst_123"},
+        pipeline_results={
+            "gate_results": gate_results,
+            "surface_activations": surface_activations,
+            "final_verdict": "ESCALATE"
+        },
+        surface_activations=surface_activations,
+        verdict="ESCALATE",
+        resolution=None
+    )
+    
+    # Mock approval data
+    mock_approval_data = {
+        "trace_id": "abc-123-def",
+        "tool": "jira_create",
+        "user_id": "analyst_123",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "params": {"title": "Q4 Compliance Review", "description": "Review compliance requirements for Q4"},
+        "resolution": None,
+        "controls_applied": ["approval_hitl"],
+        "evidence": {
+            "reason": "requires_human_approval",
+            "policy_ref": "§3.2 - High-risk tool access"
+        }
+    }
+    
+    # Mock second approval for the queue
+    mock_approval_data_2 = {
+        "trace_id": "xyz-456-ghi",
+        "tool": "jira_create",
+        "user_id": "analyst_456",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "params": {"title": "Security Audit", "description": "Perform security audit"},
+        "resolution": None,
+        "controls_applied": ["approval_hitl"],
+        "evidence": {
+            "reason": "requires_human_approval",
+            "policy_ref": "§3.2 - High-risk tool access"
+        }
+    }
+    
+    return mock_trace, mock_approval_data, [mock_approval_data, mock_approval_data_2]
+
+
 def process_sandbox_request(user_prompt: str, user_id: str = "analyst_123"):
     """Process a request through the full pipeline"""
     enforcer = st.session_state.enforcer
@@ -173,133 +261,295 @@ with st.sidebar:
             st.caption(description)
 
 
-# Main content area with tabs
-tab1, tab2, tab3, tab4 = st.tabs([
-    "Enforcement Pipeline",
-    "Surface Activation",
-    "Approval Queue",
-    "Audit Trail"
-])
-
-
-# Tab 1: Enforcement Pipeline
-with tab1:
-    st.header("Enforcement Pipeline")
-    st.caption("8-gate runtime sequence")
-    
-    st.markdown("### Submit Request")
-    st.markdown("Submit a single request to see it processed through the enforcement pipeline")
-    
-    if not st.session_state.enforcer:
-        st.error("Please load a policy file first. Policy file should be in the parent directory.")
-        st.stop()
-    
-    user_input = st.text_area(
-        "User Prompt",
-        placeholder="e.g., Draft a Q4 compliance policy update under OCC supervision.",
-        height=100
+# Header with Simulate/Enforce toggle
+header_col1, header_col2 = st.columns([4, 1])
+with header_col1:
+    pass  # Empty space for layout
+with header_col2:
+    simulate_mode = st.radio(
+        "Mode",
+        ["SIMULATE", "ENFORCE"],
+        index=0 if st.session_state.simulate_mode else 1,
+        horizontal=True,
+        key="mode_toggle"
     )
-    
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        submit_button = st.button("Submit Request", type="primary")
-    
-    if submit_button and user_input:
-        with st.spinner("Processing request through enforcement pipeline..."):
-            trace = process_sandbox_request(user_input)
-            if trace:
-                st.session_state.current_trace_id = trace.trace_id
-                
-                # Display trace ID prominently
-                st.success(f"**Trace ID:** `{trace.trace_id}`")
-                
-                # Display verdict
-                st.markdown("### Final Verdict")
-                verdict = trace.verdict
-                render_verdict_badge(verdict, trace.resolution)
-                
-                # PRIMARY VIEW: Pipeline Flow (8 gates)
-                st.markdown("---")
-                trace_dict = {
-                    "pipeline_results": {
-                        "gate_results": trace.pipeline_results.get("gate_results", [])
-                    }
-                }
-                render_pipeline_flow(trace_dict, expandable=True)
-    
-    elif submit_button and not user_input:
-        st.error("Please enter a user prompt before submitting.")
+    st.session_state.simulate_mode = (simulate_mode == "SIMULATE")
 
+st.markdown("---")
 
-# Tab 2: Surface Activation
-with tab2:
-    st.header("Surface Activation")
-    st.caption("Interaction points touched")
-    
-    st.markdown("### View Surface Activation by Trace ID")
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        trace_id_input = st.text_input(
-            "Trace ID",
-            value=st.session_state.current_trace_id or "",
-            placeholder="TRACE-20241220120000-ABC12345"
-        )
-    with col2:
-        search_button = st.button("Search", type="primary")
-    
-    if search_button and trace_id_input:
-        trace_manager = st.session_state.trace_manager
-        trace = trace_manager.get_trace(trace_id_input)
-        
-        if trace:
-            st.success(f"Found trace: `{trace_id_input}`")
-            
-            # Request info
-            st.markdown("### Request Information")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write("**User Prompt:**", trace.request_data.get("prompt", "N/A"))
-            with col2:
-                st.write("**User ID:**", trace.request_data.get("user_id", "N/A"))
-                st.write("**Timestamp:**", trace.timestamp)
-            
-            # Verdict
-            st.markdown("### Final Verdict")
-            render_verdict_badge(trace.verdict, trace.resolution)
-            
-            # Surface Activation view
-            st.markdown("---")
-            trace_dict = {
-                "pipeline_results": {
-                    "gate_results": trace.pipeline_results.get("gate_results", [])
-                }
+# Get current trace data or use mock state
+current_trace = None
+trace_dict = None
+mock_approval_data = None
+mock_pending_approvals = []
+
+if st.session_state.current_trace_id:
+    trace_manager = st.session_state.trace_manager
+    current_trace = trace_manager.get_trace(st.session_state.current_trace_id)
+    if current_trace:
+        trace_dict = {
+            "trace_id": current_trace.trace_id,
+            "pipeline_results": {
+                "gate_results": current_trace.pipeline_results.get("gate_results", [])
             }
-            render_surface_activation(trace.surface_activations, trace_dict)
-            
-            # Full trace data (expandable)
-            with st.expander("Full Trace Data (JSON)"):
-                st.json(trace_manager.to_dict(trace))
-        else:
-            st.error(f"Trace ID `{trace_id_input}` not found.")
-    elif search_button:
-        st.warning("Please enter a Trace ID to search.")
-    elif st.session_state.current_trace_id:
-        # Show current trace if available
-        trace_manager = st.session_state.trace_manager
-        trace = trace_manager.get_trace(st.session_state.current_trace_id)
-        if trace:
-            trace_dict = {
-                "pipeline_results": {
-                    "gate_results": trace.pipeline_results.get("gate_results", [])
-                }
-            }
-            render_surface_activation(trace.surface_activations, trace_dict)
+        }
+elif st.session_state.simulate_mode:
+    # Use mock state in simulate mode
+    current_trace, mock_approval_data, mock_pending_approvals = get_mock_state()
+    trace_dict = {
+        "trace_id": current_trace.trace_id,
+        "pipeline_results": {
+            "gate_results": current_trace.pipeline_results.get("gate_results", [])
+        }
+    }
+
+# Cognitive Onramp - Hero Section (Full Width)
+if current_trace:
+    gate_results = current_trace.pipeline_results.get("gate_results", [])
+    render_cognitive_onramp(current_trace.surface_activations, gate_results)
+else:
+    st.markdown("### Cognitive Onramp")
+    st.caption("Every AI request passes through 8 checkpoints across 4 surfaces.")
+    st.info("Submit a request to see the cognitive onramp visualization.")
+
+st.markdown("---")
+
+# Main content area - two column layout
+main_col1, main_col2 = st.columns([2, 1])
+
+# LEFT COLUMN
+with main_col1:
+    # 1. Enforcement Pipeline
+    if current_trace and trace_dict:
+        render_enforcement_pipeline_enhanced(trace_dict)
     else:
-        st.info("Submit a request in the Enforcement Pipeline tab to see surface activation, or search for a trace by ID.")
+        st.markdown("### Enforcement Pipeline - gate runtime sequence")
+        st.info("Submit a request to see the enforcement pipeline flow.")
+    
+    st.markdown("---")
+    
+    # 2. Escalation Details
+    if current_trace and trace_dict:
+        approval_data = None
+        if current_trace.verdict == "ESCALATE":
+            # Use mock approval data if in simulate mode, otherwise find from pending approvals
+            if st.session_state.simulate_mode and mock_approval_data:
+                approval_data = mock_approval_data
+            else:
+                # Find matching approval data
+                for approval in st.session_state.pending_approvals:
+                    if approval.get("trace_id") == current_trace.trace_id:
+                        approval_data = approval
+                        break
+        render_escalation_details(trace_dict, approval_data)
+    
+    st.markdown("---")
+    
+    # 3. Policy Diff
+    # Show mock summary in simulate mode
+    if st.session_state.simulate_mode:
+        st.markdown("### Policy Diff (vs Baseline):")
+        st.write("**Summary:** +2 escalation triggers, -1 tool")
+        policy_mode = st.radio("Policy Mode", ["BASELINE", "CUSTOM"], horizontal=True, key="policy_mode_selector")
+        if policy_mode == "BASELINE":
+            st.info("**BASELINE** (selected)")
+        else:
+            st.write("**CUSTOM**")
+    else:
+        render_policy_diff()
 
+# RIGHT COLUMN
+with main_col2:
+    # 1. Surface Activation
+    if current_trace:
+        render_surface_activation_compact(current_trace.surface_activations, trace_dict)
+    else:
+        st.markdown("### Surface Activation")
+        st.caption("Interaction points touched")
+        st.info("Submit a request to see surface activation.")
+    
+    st.markdown("---")
+    
+    # 2. Approval Queue
+    # Use mock approvals in simulate mode if no real approvals exist
+    if st.session_state.simulate_mode and not st.session_state.pending_approvals and mock_pending_approvals:
+        render_approval_queue_compact(mock_pending_approvals)
+    else:
+        render_approval_queue_compact(st.session_state.pending_approvals)
 
-# Tab 3: Approval Queue
-with tab3:
+st.markdown("---")
+
+# Key UI Elements section
+st.markdown("---")
+st.markdown("### Key UI Elements (P0 Requirements)")
+st.markdown("""
+1. Cognitive Onramp — Always visible strip with 8-surface grid + gate progress timeline
+2. Baseline vs Custom — Rule badges showing regulatory floor vs configurable
+3. Policy Diff — Summary card when switching policies
+4. Simulate/Enforce Toggle — Safe testing mode before deploying
+""")
+
+# Navigation tabs at bottom
+nav_tab1, nav_tab2, nav_tab3, nav_tab4 = st.tabs(["Pipeline Trace", "Approval Queue", "Audit Log", "Export"])
+
+# Tab content based on selection - show additional content in tabs
+with nav_tab1:
+    # Pipeline Trace content is already shown above in main layout
+    st.info("Main pipeline trace content is displayed above in the single-page dashboard.")
+    if current_trace:
+        st.markdown("### Current Trace Details")
+        st.write(f"**Trace ID:** `{current_trace.trace_id}`")
+        st.write(f"**Verdict:** {current_trace.verdict}")
+        if current_trace.resolution:
+            st.write(f"**Resolution:** {current_trace.resolution}")
+
+with nav_tab2:
+    # Show full approval queue
+    st.header("Approval Queue")
+    st.caption("Pending human review")
+    
+    pending_approvals = st.session_state.pending_approvals
+    
+    if not pending_approvals:
+        st.info("No pending approvals. All requests have been processed.")
+    else:
+            # Filters
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                filter_tool = st.selectbox(
+                    "Filter by Tool",
+                    ["All"] + list(set(a.get("tool", "Unknown") for a in pending_approvals)),
+                    key="approval_filter_tool"
+                )
+            with col2:
+                filter_user = st.selectbox(
+                    "Filter by User",
+                    ["All"] + list(set(a.get("user_id", "Unknown") for a in pending_approvals)),
+                    key="approval_filter_user"
+                )
+            with col3:
+                pass
+            
+            # Filter approvals
+            filtered_approvals = pending_approvals
+            if filter_tool != "All":
+                filtered_approvals = [a for a in filtered_approvals if a.get("tool") == filter_tool]
+            if filter_user != "All":
+                filtered_approvals = [a for a in filtered_approvals if a.get("user_id") == filter_user]
+            
+            st.write(f"**{len(filtered_approvals)} pending approval(s)**")
+            
+            # Approval list
+            for idx, approval in enumerate(filtered_approvals):
+                with st.container():
+                    st.markdown("---")
+                    col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+                    
+                    with col1:
+                        st.write(f"**Trace ID:** `{approval.get('trace_id', 'N/A')}`")
+                        st.write(f"**Tool:** {approval.get('tool', 'N/A')}")
+                    
+                    with col2:
+                        st.write(f"**User:** {approval.get('user_id', 'N/A')}")
+                        st.write(f"**Timestamp:** {approval.get('timestamp', 'N/A')}")
+                    
+                    with col3:
+                        render_verdict_badge("ESCALATE", approval.get("resolution"))
+                    
+                    with col4:
+                        if st.button("Review", key=f"review_{idx}"):
+                            st.session_state[f"reviewing_{idx}"] = True
+                    
+                    # Approval modal with reason block
+                    if st.session_state.get(f"reviewing_{idx}", False):
+                        st.markdown("#### Review Approval Request")
+                        triggered_rule, risk_rationale, scope = render_approval_modal(
+                            approval,
+                            approval.get("trace_id", "")
+                        )
+                        
+                        col_approve, col_reject, col_cancel = st.columns(3)
+                        
+                        with col_approve:
+                            if st.button("✓ Approve", key=f"approve_{idx}", type="primary"):
+                                approval["resolution"] = "APPROVED"
+                                approval["approved_by"] = "current_user"
+                                approval["approved_at"] = datetime.utcnow().isoformat() + "Z"
+                                
+                                # Log to audit trail
+                                enforcer = st.session_state.enforcer
+                                tool = approval.get("tool", "unknown_tool")
+                                evidence = {
+                                    "trace_id": approval.get("trace_id"),
+                                    "approval_timestamp": approval["approved_at"],
+                                    "approver": "current_user",
+                                    "tool": tool,
+                                    "params": approval.get("params", {})
+                                }
+                                enforcer._log_audit(
+                                    "S-O",
+                                    tool,
+                                    "APPROVED",
+                                    "current_user",
+                                    ["human_approval"],
+                                    evidence
+                                )
+                                
+                                trace_manager = st.session_state.trace_manager
+                                trace = trace_manager.get_trace(approval.get("trace_id"))
+                                if trace:
+                                    trace.resolution = "APPROVED"
+                                
+                                st.session_state.pending_approvals.remove(approval)
+                                st.session_state[f"reviewing_{idx}"] = False
+                                st.rerun()
+                        
+                        with col_reject:
+                            if st.button("✗ Reject", key=f"reject_{idx}"):
+                                comment = st.session_state.get(f"reject_reason_{idx}", "")
+                                approval["resolution"] = "REJECTED"
+                                approval["rejected_by"] = "current_user"
+                                approval["rejected_at"] = datetime.utcnow().isoformat() + "Z"
+                                approval["rejection_reason"] = comment
+                                
+                                # Log to audit trail
+                                enforcer = st.session_state.enforcer
+                                tool = approval.get("tool", "unknown_tool")
+                                evidence = {
+                                    "trace_id": approval.get("trace_id"),
+                                    "rejection_timestamp": approval["rejected_at"],
+                                    "rejector": "current_user",
+                                    "tool": tool,
+                                    "params": approval.get("params", {}),
+                                    "rejection_reason": comment
+                                }
+                                enforcer._log_audit(
+                                    "S-O",
+                                    tool,
+                                    "REJECTED",
+                                    "current_user",
+                                    ["human_rejection"],
+                                    evidence
+                                )
+                                
+                                trace_manager = st.session_state.trace_manager
+                                trace = trace_manager.get_trace(approval.get("trace_id"))
+                                if trace:
+                                    trace.resolution = "REJECTED"
+                                
+                                st.session_state.pending_approvals.remove(approval)
+                                st.session_state[f"reviewing_{idx}"] = False
+                                st.rerun()
+                        
+                        with col_cancel:
+                            if st.button("Cancel", key=f"cancel_{idx}"):
+                                st.session_state[f"reviewing_{idx}"] = False
+                                st.rerun()
+                        
+                        # Rejection reason text input below the buttons
+                        comment = st.text_input("Rejection Reason", key=f"reject_reason_{idx}", placeholder="Enter reason for rejection (optional)")
+
+with nav_tab3:
     st.header("Approval Queue")
     st.caption("Pending human review")
     
@@ -469,86 +719,84 @@ with tab3:
                     """, unsafe_allow_html=True)
 
 
-# Tab 4: Audit Trail
-with tab4:
-    st.header("Audit Trail")
-    st.caption("Decision history & evidence")
-    
-    if not st.session_state.enforcer:
-        st.error("No policy loaded.")
-        st.stop()
-    
-    enforcer = st.session_state.enforcer
-    audit_log = enforcer.get_audit_log()
-    
-    if not audit_log:
-        st.info("No audit log entries yet.")
-    else:
-        # Filters
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            filter_verdict = st.selectbox(
-                "Filter by Verdict",
-                ["All"] + list(set(entry.get("decision", "Unknown") for entry in audit_log)),
-                key="audit_filter_verdict"
-            )
-        with col2:
-            filter_gate = st.selectbox(
-                "Filter by Gate",
-                ["All"] + list(set(entry.get("gate", "Unknown") for entry in audit_log)),
-                key="audit_filter_gate"
-            )
-        with col3:
-            filter_user = st.selectbox(
-                "Filter by User",
-                ["All"] + list(set(entry.get("user_id", "Unknown") for entry in audit_log)),
-                key="audit_filter_user"
-            )
-        with col4:
-            days_back = st.selectbox("Time Range", [7, 30, 90, 365, "All"], key="audit_time_range")
+        st.header("Audit Trail")
+        st.caption("Decision history & evidence")
         
-        # Apply filters
-        filtered_log = audit_log
-        if filter_verdict != "All":
-            filtered_log = [e for e in filtered_log if e.get("decision") == filter_verdict]
-        if filter_gate != "All":
-            filtered_log = [e for e in filtered_log if e.get("gate") == filter_gate]
-        if filter_user != "All":
-            filtered_log = [e for e in filtered_log if e.get("user_id") == filter_user]
+        if not st.session_state.enforcer:
+            st.error("No policy loaded.")
+        else:
+            enforcer = st.session_state.enforcer
+            audit_log = enforcer.get_audit_log()
+            
+            if not audit_log:
+                st.info("No audit log entries yet.")
+            else:
+                # Filters
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    filter_verdict = st.selectbox(
+                        "Filter by Verdict",
+                        ["All"] + list(set(entry.get("decision", "Unknown") for entry in audit_log)),
+                        key="audit_filter_verdict"
+                    )
+                with col2:
+                    filter_gate = st.selectbox(
+                        "Filter by Gate",
+                        ["All"] + list(set(entry.get("gate", "Unknown") for entry in audit_log)),
+                        key="audit_filter_gate"
+                    )
+                with col3:
+                    filter_user = st.selectbox(
+                        "Filter by User",
+                        ["All"] + list(set(entry.get("user_id", "Unknown") for entry in audit_log)),
+                        key="audit_filter_user"
+                    )
+                with col4:
+                    days_back = st.selectbox("Time Range", [7, 30, 90, 365, "All"], key="audit_time_range")
+                
+                # Apply filters
+                filtered_log = audit_log
+                if filter_verdict != "All":
+                    filtered_log = [e for e in filtered_log if e.get("decision") == filter_verdict]
+                if filter_gate != "All":
+                    filtered_log = [e for e in filtered_log if e.get("gate") == filter_gate]
+                if filter_user != "All":
+                    filtered_log = [e for e in filtered_log if e.get("user_id") == filter_user]
+                
+                st.write(f"**{len(filtered_log)} audit log entry/entries**")
+                
+                # Display audit log as table
+                if filtered_log:
+                    display_data = []
+                    for entry in filtered_log[-100:]:
+                        display_data.append({
+                            "Timestamp": entry.get("timestamp", "N/A")[:19],
+                            "Gate": entry.get("gate", "N/A"),
+                            "Action": entry.get("action", "N/A"),
+                            "Decision": entry.get("decision", "N/A"),
+                            "User": entry.get("user_id", "N/A"),
+                            "Controls": ", ".join(entry.get("controls", []))[:50]
+                        })
+                    
+                    st.dataframe(display_data, use_container_width=True, height=400)
+                    
+                    # Replay trace buttons
+                    st.markdown("### Replay Traces")
+                    recent_entries = filtered_log[-10:]
+                    for entry in recent_entries:
+                        trace_id_from_evidence = entry.get("evidence", {}).get("trace_id")
+                        if trace_id_from_evidence:
+                            if st.button(f"Replay Trace {trace_id_from_evidence[:20]}...", key=f"replay_{entry.get('timestamp')}"):
+                                st.session_state.current_trace_id = trace_id_from_evidence
+                                st.rerun()
+
+with nav_tab4:
+        st.header("Evidence Export")
+        st.caption("Generate evidence packets for audit and compliance")
         
-        st.write(f"**{len(filtered_log)} audit log entry/entries**")
-        
-        # Display audit log as table
-        if filtered_log:
-            display_data = []
-            for entry in filtered_log[-100:]:
-                display_data.append({
-                    "Timestamp": entry.get("timestamp", "N/A")[:19],
-                    "Gate": entry.get("gate", "N/A"),
-                    "Action": entry.get("action", "N/A"),
-                    "Decision": entry.get("decision", "N/A"),
-                    "User": entry.get("user_id", "N/A"),
-                    "Controls": ", ".join(entry.get("controls", []))[:50]
-                })
-            
-            st.dataframe(display_data, use_container_width=True, height=400)
-            
-            # Replay trace buttons
-            st.markdown("### Replay Traces")
-            recent_entries = filtered_log[-10:]
-            for entry in recent_entries:
-                trace_id_from_evidence = entry.get("evidence", {}).get("trace_id")
-                if trace_id_from_evidence:
-                    if st.button(f"Replay Trace {trace_id_from_evidence[:20]}...", key=f"replay_{entry.get('timestamp')}"):
-                        st.session_state.current_trace_id = trace_id_from_evidence
-                        st.info(f"Trace ID set to: {trace_id_from_evidence}. Switch to 'Enforcement Pipeline' tab to view.")
-                        st.rerun()
-            
-            # Export functionality
-            st.markdown("---")
-            st.markdown("### Evidence Export")
-            st.markdown("Generate evidence packets for audit and compliance")
-            
+        if not st.session_state.enforcer:
+            st.error("No policy loaded.")
+        else:
             col1, col2 = st.columns(2)
             
             with col1:
@@ -631,7 +879,6 @@ with tab4:
                                 evidence_packet["related_audit_entries"] = audit_entries
                         else:
                             st.error(f"Trace ID {export_trace_id} not found.")
-                            st.stop()
                     else:
                         if include_full_trace:
                             all_traces = trace_manager.get_all_traces()
