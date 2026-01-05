@@ -363,3 +363,262 @@ def get_gate_legend() -> Dict[str, str]:
         "Gate 8 - Audit Export": "Prepares the complete evidence packet with full trace, decisions, and metadata for export."
     }
 
+
+def render_gate_progress_timeline(gate_results: List[Dict[str, Any]]):
+    """Render 8 numbered indicators in horizontal timeline using st.columns"""
+    st.markdown("**Gate Progress**")
+    cols = st.columns(8)
+    
+    for i in range(1, 9):
+        gate_result = next((g for g in gate_results if g.get("gate_num") == i), None)
+        with cols[i-1]:
+            if gate_result:
+                status = gate_result.get("status", "unknown")
+                verdict = gate_result.get("verdict", "")
+                
+                if status == "passed" or verdict == "ALLOW":
+                    st.success(f"**{i}**")
+                elif status == "escalated" or verdict == "ESCALATE":
+                    st.warning(f"**{i}**")
+                elif status == "failed" or verdict == "DENY":
+                    st.error(f"**{i}**")
+                else:
+                    st.info(f"**{i}**")
+            else:
+                st.info(f"**{i}**")
+
+
+def render_cognitive_onramp(surfaces_touched: Dict[str, bool], gate_results: List[Dict[str, Any]]):
+    """Render Cognitive Onramp section with 8-surface grid and gate progress timeline"""
+    st.markdown("### Cognitive Onramp")
+    st.caption("Every AI request passes through 8 checkpoints across 4 surfaces.")
+    
+    # Line 1: 8-surface grid in a single horizontal row (full width)
+    # Green background: U-I, U-O, S-O; Gray background: all others
+    surface_order = ["U-I", "U-O", "S-I", "S-O", "M-I", "M-O", "A-I", "A-O"]
+    green_surfaces = {"U-I", "U-O", "S-O"}
+    surface_cols = st.columns(8)
+    for i, surface_id in enumerate(surface_order):
+        with surface_cols[i]:
+            if surface_id in green_surfaces:
+                # Green background with white text
+                st.success(f"**{surface_id}**")
+            else:
+                # Gray background - using st.info for colored background (closest to gray in Streamlit)
+                # Note: st.info gives blue background, but it's the closest we can get without CSS
+                st.info(f"**{surface_id}**")
+    
+    # Line 2: Gate Progress (left) and Legend (right) with space between
+    progress_col, spacer_col, legend_col = st.columns([4, 1, 2])
+    
+    # Gate Progress timeline
+    with progress_col:
+        st.markdown("**Gate Progress:**")
+        gate_cols = st.columns(8)
+        for i in range(1, 9):
+            gate_result = next((g for g in gate_results if g.get("gate_num") == i), None)
+            with gate_cols[i - 1]:
+                if gate_result:
+                    status = gate_result.get("status", "unknown")
+                    verdict = gate_result.get("verdict", "")
+                    
+                    if status == "passed" or verdict == "ALLOW":
+                        st.success(f"**{i}**")
+                    elif status == "escalated" or verdict == "ESCALATE":
+                        st.warning(f"**{i}**")
+                    elif status == "failed" or verdict == "DENY":
+                        st.error(f"**{i}**")
+                    else:
+                        st.info(f"**{i}**")
+                else:
+                    st.info(f"**{i}**")
+    
+    # Legend as vertical column of three items
+    with legend_col:
+        st.markdown("**Legend:**")
+        st.success("Pass")
+        st.warning("Escalate")
+        st.info("Pending")
+
+
+def render_enforcement_pipeline_enhanced(trace_data: Dict[str, Any]):
+    """Render enhanced enforcement pipeline with 8 steps in a 4x2 grid"""
+    st.markdown("### Enforcement Pipeline")
+    st.caption("gate runtime sequence")
+    
+    gate_results = trace_data.get("pipeline_results", {}).get("gate_results", [])
+    
+    gate_info = [
+        {"num": 1, "name": "INPUT VAL", "desc": "Schema & injection"},
+        {"num": 2, "name": "INTENT", "desc": "Goal classification"},
+        {"num": 3, "name": "DATA CLASS", "desc": "PII/PHI detection"},
+        {"num": 4, "name": "POLICY", "desc": "Rule selection"},
+        {"num": 5, "name": "PERMISSION", "desc": "Eligibility check"},
+        {"num": 6, "name": "APPROVAL", "desc": "Final verdict"},
+        {"num": 7, "name": "EVIDENCE", "desc": "Decision capture"},
+        {"num": 8, "name": "EXPORT", "desc": "Audit packet"}
+    ]
+    
+    # Create 4x2 grid: 4 columns, 2 rows
+    # Row 1: Gates 1-4
+    row1_cols = st.columns(4)
+    for i in range(4):
+        info = gate_info[i]
+        gate_num = info["num"]
+        gate_result = next((g for g in gate_results if g.get("gate_num") == gate_num), None)
+        
+        with row1_cols[i]:
+            if gate_result:
+                status = gate_result.get("status", "unknown")
+                verdict = gate_result.get("verdict", "")
+                
+                # Single write call with three lines: Gate number/name, Description, Status
+                if status == "passed" or verdict == "ALLOW":
+                    st.success(f"**{gate_num} {info['name']}**\n{info['desc']}\n**PASS**")
+                elif status == "escalated" or verdict == "ESCALATE":
+                    st.warning(f"**{gate_num} {info['name']}**\n{info['desc']}\n**ESCALATE**")
+                elif status == "failed" or verdict == "DENY":
+                    st.error(f"**{gate_num} {info['name']}**\n{info['desc']}\n**DENY**")
+                else:
+                    st.write(f"**{gate_num} {info['name']}**\n{info['desc']}\n**PENDING**")
+            else:
+                st.write(f"**{gate_num} {info['name']}**\n{info['desc']}\n**PENDING**")
+    
+    # Row 2: Gates 5-8
+    row2_cols = st.columns(4)
+    for i in range(4, 8):
+        info = gate_info[i]
+        gate_num = info["num"]
+        gate_result = next((g for g in gate_results if g.get("gate_num") == gate_num), None)
+        
+        with row2_cols[i - 4]:
+            if gate_result:
+                status = gate_result.get("status", "unknown")
+                verdict = gate_result.get("verdict", "")
+                
+                # Single write call with three lines: Gate number/name, Description, Status
+                if status == "passed" or verdict == "ALLOW":
+                    st.success(f"**{gate_num} {info['name']}**\n{info['desc']}\n**PASS**")
+                elif status == "escalated" or verdict == "ESCALATE":
+                    st.warning(f"**{gate_num} {info['name']}**\n{info['desc']}\n**ESCALATE**")
+                elif status == "failed" or verdict == "DENY":
+                    st.error(f"**{gate_num} {info['name']}**\n{info['desc']}\n**DENY**")
+                else:
+                    st.write(f"**{gate_num} {info['name']}**\n{info['desc']}\n**PENDING**")
+            else:
+                st.write(f"**{gate_num} {info['name']}**\n{info['desc']}\n**PENDING**")
+
+
+def render_escalation_details(trace_data: Dict[str, Any], approval_data: Optional[Dict[str, Any]] = None):
+    """Render escalation details card"""
+    gate_results = trace_data.get("pipeline_results", {}).get("gate_results", [])
+    escalated_gate = next((g for g in gate_results if g.get("verdict") == "ESCALATE" or g.get("status") == "escalated"), None)
+    
+    if not escalated_gate and not approval_data:
+        return
+    
+    with st.container():
+        st.warning("**ESCALATE**")
+        
+        if approval_data:
+            trace_id = approval_data.get("trace_id", "N/A")
+            reason = approval_data.get("evidence", {}).get("reason", "requires_human_approval")
+            policy_ref = approval_data.get("evidence", {}).get("policy_ref", "§3.2 - High-risk tool access")
+        else:
+            trace_id = trace_data.get("trace_id", "N/A")
+            reason = escalated_gate.get("decision_reason", "requires_human_approval") if escalated_gate else "requires_human_approval"
+            policy_ref = "§3.2 - High-risk tool access"
+        
+        # Trace ID with Copy button
+        trace_col1, trace_col2 = st.columns([3, 1])
+        with trace_col1:
+            st.text_input("Trace", value=trace_id, key="trace_id_display", disabled=True, label_visibility="collapsed")
+        with trace_col2:
+            if st.button("Copy ID", key="copy_trace_id"):
+                st.session_state["copied_trace_id"] = trace_id
+                st.rerun()
+        
+        # Show success message if trace ID was copied
+        if st.session_state.get("copied_trace_id") == trace_id:
+            st.success(f"Trace ID `{trace_id}` ready to copy (select text above and use Ctrl+C)")
+        
+        st.write(f"**Reason:** {reason}")
+        st.write(f"**Policy Reference:** {policy_ref}")
+        
+        if st.button("Open Approval Queue →", type="primary", key="open_approval_queue"):
+            st.session_state["nav_tab"] = "Approval Queue"
+            st.rerun()
+
+
+def render_policy_diff(baseline_policy: Optional[Dict[str, Any]] = None, current_policy: Optional[Dict[str, Any]] = None):
+    """Render policy diff section"""
+    st.markdown("### Policy Diff (vs Baseline):")
+    
+    # Summary (mock data for now)
+    st.write("**Summary:** +2 escalation triggers, -1 tool")
+    
+    # Badge selector
+    policy_mode = st.radio("Policy Mode", ["BASELINE", "CUSTOM"], horizontal=True, key="policy_mode_selector")
+    
+    if policy_mode == "BASELINE":
+        st.info("**BASELINE** (selected)")
+    else:
+        st.write("**CUSTOM**")
+
+
+def render_surface_activation_compact(surfaces_touched: Dict[str, bool], trace_data: Dict[str, Any] = None):
+    """Render compact surface activation for right column"""
+    st.markdown("### Surface Activation")
+    st.caption("Interaction points touched")
+    
+    surface_labels = {
+        "U-I": "User Inbound",
+        "U-O": "User Outbound",
+        "S-I": "System Inbound",
+        "S-O": "System Outbound",
+        "M-I": "Memory Inbound",
+        "M-O": "Memory Outbound",
+        "A-I": "Agent Inbound",
+        "A-O": "Agent Outbound"
+    }
+    
+    surface_grid = [
+        [("U-I", "User"), ("U-O", "User")],
+        [("S-I", "System"), ("S-O", "System")],
+        [("M-I", "Memory"), ("M-O", "Memory")],
+        [("A-I", "Agent"), ("A-O", "Agent")]
+    ]
+    
+    # Create 2x4 grid
+    for row in surface_grid:
+        cols = st.columns(2)
+        for idx, (surface_id, surface_type) in enumerate(row):
+            with cols[idx]:
+                activated = surfaces_touched.get(surface_id, False)
+                if activated:
+                    st.success(f"**{surface_id}**")
+                else:
+                    st.info(f"**{surface_id}**")
+
+
+def render_approval_queue_compact(pending_approvals: List[Dict[str, Any]]):
+    """Render compact approval queue for right column"""
+    st.markdown("### Approval Queue")
+    st.caption("Pending human review")
+    
+    if not pending_approvals:
+        st.info("No pending approvals")
+        return
+    
+    for idx, approval in enumerate(pending_approvals[:5]):  # Show max 5
+        with st.container():
+            trace_id = approval.get("trace_id", "N/A")
+            st.write(f"`{trace_id}`")
+            st.warning("ESCALATE")
+            if st.button("Review", key=f"compact_review_{idx}"):
+                st.session_state[f"reviewing_{idx}"] = True
+                st.session_state["nav_tab"] = "Approval Queue"
+                st.rerun()
+            if idx < len(pending_approvals) - 1:
+                st.markdown("---")
+
