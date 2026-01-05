@@ -1,0 +1,78 @@
+{
+  "policy_id": "bank_compliance_strict",
+  "policy_version": "2.0.0",
+  "created": "2024-12-20",
+  "description": "Strict compliance policy - enhanced restrictions and approvals",
+  
+  "dials": {
+    "autonomy": {
+      "level": "L1",
+      "label": "approval_required",
+      "description": "All actions require human approval"
+    },
+    "tool_access": {
+      "level": "L1", 
+      "label": "read_only",
+      "description": "Agent can only read; all writes require approval"
+    },
+    "personalization": {
+      "level": "L2",
+      "label": "session_only",
+      "description": "Preferences stored only for current session"
+    },
+    "memory": {
+      "level": "L2",
+      "label": "ephemeral",
+      "description": "Memory cleared after session"
+    },
+    "inter_agent": {
+      "level": "L1",
+      "label": "none",
+      "description": "No inter-agent communication"
+    }
+  },
+
+  "gates": {
+    "S-O": {
+      "name": "System Outbound",
+      "direction": "agent_to_system",
+      "allow": [
+        {"action": "read", "target": "sharepoint"},
+        {"action": "read", "target": "occ_fdic_db"},
+        {"action": "write", "target": "draft_doc", "controls": ["approval_hitl", "log"]},
+        {"action": "execute", "target": "jira_create_task", "controls": ["approval_hitl", "log", "change_ticket_id_required"]},
+        {"action": "execute", "target": "email_send", "controls": ["approval_hitl", "log"]}
+      ],
+      "controls": [
+        {"type": "least_privilege", "params": {"scope_to_tool_allowlist": true}},
+        {"type": "approval_hitl", "params": {"required_for": ["write", "execute"]}},
+        {"type": "log", "params": {"capture": ["tool_call", "params", "result", "approval_record"]}}
+      ],
+      "deny": [
+        "publish_external",
+        "write_to_final_approved_without_approval"
+      ]
+    }
+  },
+
+  "overlays_enabled": ["OCC_MRM_v0", "EU_AIACT_HR_v0"],
+  "overlays": {
+    "OCC_MRM_v0": {
+      "name": "OCC Model Risk Management",
+      "version": "0.1",
+      "constraints": [
+        {
+          "trigger": {"gate": "S-O", "action": "execute"},
+          "add_controls": ["approval_hitl", "change_ticket_id_required"],
+          "evidence": ["approval_record", "ticket_id"]
+        },
+        {
+          "trigger": {"gate": "S-O", "action": "write"},
+          "add_controls": ["approval_hitl"],
+          "evidence": ["approval_record"]
+        }
+      ]
+    }
+  }
+}
+
