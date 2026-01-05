@@ -354,8 +354,6 @@ with main_col1:
                         break
         render_escalation_details(trace_dict, approval_data)
     
-    st.markdown("---")
-    
     # 3. Policy Diff
     # Load baseline and current policies for comparison
     baseline_policy = None
@@ -401,7 +399,6 @@ with main_col2:
 st.markdown("---")
 
 # Key UI Elements section
-st.markdown("---")
 st.markdown("### Key UI Elements (P0 Requirements)")
 st.markdown("""
 1. Cognitive Onramp — Always visible strip with 8-surface grid + gate progress timeline
