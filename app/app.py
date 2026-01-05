@@ -73,6 +73,17 @@ def get_policy_files():
     return sorted(policy_files)
 
 
+def load_policy_json(policy_filename: str) -> Optional[Dict[str, Any]]:
+    """Load a policy file as JSON dictionary"""
+    parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    policy_path = os.path.join(parent_dir, policy_filename)
+    try:
+        with open(policy_path, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        return None
+
+
 def load_policy_file(policy_filename: str):
     """Load a policy file and create enforcer"""
     parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -346,17 +357,27 @@ with main_col1:
     st.markdown("---")
     
     # 3. Policy Diff
-    # Show mock summary in simulate mode
-    if st.session_state.simulate_mode:
-        st.markdown("### Policy Diff (vs Baseline):")
-        st.write("**Summary:** +2 escalation triggers, -1 tool")
-        policy_mode = st.radio("Policy Mode", ["BASELINE", "CUSTOM"], horizontal=True, key="policy_mode_selector")
-        if policy_mode == "BASELINE":
-            st.info("**BASELINE** (selected)")
-        else:
-            st.write("**CUSTOM**")
+    # Load baseline and current policies for comparison
+    baseline_policy = None
+    current_policy = None
+    
+    # Try to load baseline policy
+    baseline_file = "policy_bank_compliance_baseline.json"
+    if baseline_file in get_policy_files():
+        baseline_policy = load_policy_json(baseline_file)
+    
+    # Get current policy
+    if st.session_state.get("selected_policy") and st.session_state.get("enforcer"):
+        current_policy_file = st.session_state.get("selected_policy")
+        current_policy = load_policy_json(current_policy_file)
+        # If no current policy loaded, use baseline
+        if not current_policy:
+            current_policy = baseline_policy
     else:
-        render_policy_diff()
+        # If no policy selected, use baseline
+        current_policy = baseline_policy
+    
+    render_policy_diff(baseline_policy, current_policy)
 
 # RIGHT COLUMN
 with main_col2:

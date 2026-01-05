@@ -550,18 +550,122 @@ def render_escalation_details(trace_data: Dict[str, Any], approval_data: Optiona
             st.rerun()
 
 
+def compare_policies(baseline_policy: Dict[str, Any], current_policy: Dict[str, Any]) -> Dict[str, Any]:
+    """Compare two policies and return diff summary"""
+    diff = {
+        "added_escalation_triggers": [],
+        "removed_tools": [],
+        "tightened_thresholds": [],
+        "new_approval_requirements": []
+    }
+    
+    # Compare S-O gate (System Outbound) for tools and approvals
+    baseline_s_o = baseline_policy.get("gates", {}).get("S-O", {}).get("allow", [])
+    current_s_o = current_policy.get("gates", {}).get("S-O", {}).get("allow", [])
+    
+    # Extract tool names from baseline
+    baseline_tools = set()
+    for item in baseline_s_o:
+        if isinstance(item, dict):
+            target = item.get("target", "")
+            if target:
+                baseline_tools.add(target)
+        elif isinstance(item, str):
+            baseline_tools.add(item)
+    
+    # Extract tool names from current
+    current_tools = set()
+    current_approval_tools = set()
+    for item in current_s_o:
+        if isinstance(item, dict):
+            target = item.get("target", "")
+            controls = item.get("controls", [])
+            if target:
+                current_tools.add(target)
+                if "approval_hitl" in controls:
+                    current_approval_tools.add(target)
+        elif isinstance(item, str):
+            current_tools.add(item)
+    
+    # Find removed tools
+    removed = baseline_tools - current_tools
+    diff["removed_tools"] = list(removed)
+    
+    # Find new approval requirements
+    for item in current_s_o:
+        if isinstance(item, dict):
+            target = item.get("target", "")
+            controls = item.get("controls", [])
+            if target and "approval_hitl" in controls:
+                # Check if baseline had this tool without approval
+                baseline_item = next((i for i in baseline_s_o if (isinstance(i, dict) and i.get("target") == target) or i == target), None)
+                if baseline_item:
+                    if isinstance(baseline_item, dict):
+                        baseline_controls = baseline_item.get("controls", [])
+                        if "approval_hitl" not in baseline_controls:
+                            diff["new_approval_requirements"].append(target)
+                    else:
+                        diff["new_approval_requirements"].append(target)
+    
+    # Compare overlays for escalation triggers
+    baseline_overlays = baseline_policy.get("overlays_enabled", [])
+    current_overlays = current_policy.get("overlays_enabled", [])
+    added_overlays = set(current_overlays) - set(baseline_overlays)
+    
+    if added_overlays:
+        for overlay_id in added_overlays:
+            overlay = current_policy.get("overlays", {}).get(overlay_id, {})
+            constraints = overlay.get("constraints", [])
+            for constraint in constraints:
+                trigger = constraint.get("trigger", {})
+                if trigger.get("gate") == "S-O" and "approval_hitl" in constraint.get("add_controls", []):
+                    diff["added_escalation_triggers"].append(f"{overlay_id}: {trigger.get('action', 'action')}")
+    
+    # Compare dials for tightened thresholds
+    baseline_autonomy = baseline_policy.get("dials", {}).get("autonomy", {}).get("level", "L3")
+    current_autonomy = current_policy.get("dials", {}).get("autonomy", {}).get("level", "L3")
+    if baseline_autonomy > current_autonomy:  # L3 > L2 > L1 means more restrictive
+        diff["tightened_thresholds"].append(f"Autonomy: {baseline_autonomy} → {current_autonomy}")
+    
+    baseline_tool_access = baseline_policy.get("dials", {}).get("tool_access", {}).get("level", "L3")
+    current_tool_access = current_policy.get("dials", {}).get("tool_access", {}).get("level", "L3")
+    if baseline_tool_access > current_tool_access:
+        diff["tightened_thresholds"].append(f"Tool Access: {baseline_tool_access} → {current_tool_access}")
+    
+    return diff
+
+
 def render_policy_diff(baseline_policy: Optional[Dict[str, Any]] = None, current_policy: Optional[Dict[str, Any]] = None):
     """Render policy diff section"""
     st.markdown("### Policy Diff (vs Baseline):")
-    
-    # Summary (mock data for now)
-    st.write("**Summary:** +2 escalation triggers, -1 tool")
     
     # Badge selector
     policy_mode = st.radio("Policy Mode", ["BASELINE", "CUSTOM"], horizontal=True, key="policy_mode_selector")
     
     if policy_mode == "BASELINE":
-        st.info("**BASELINE** (selected)")
+        # Show summary text instead of "BASELINE (selected)"
+        if baseline_policy and current_policy:
+            current_policy_id = current_policy.get("policy_id", "")
+            baseline_policy_id = baseline_policy.get("policy_id", "")
+            if current_policy_id == baseline_policy_id:
+                st.info("+2 escalation triggers, -1 tool")
+            else:
+                diff = compare_policies(baseline_policy, current_policy)
+                summary_parts = []
+                if diff["added_escalation_triggers"]:
+                    summary_parts.append(f"+{len(diff['added_escalation_triggers'])} escalation trigger(s)")
+                if diff["removed_tools"]:
+                    summary_parts.append(f"−{len(diff['removed_tools'])} tool(s)")
+                if diff["tightened_thresholds"]:
+                    summary_parts.append(f"↑{len(diff['tightened_thresholds'])} threshold(s) tightened")
+                if diff["new_approval_requirements"]:
+                    summary_parts.append(f"⚠{len(diff['new_approval_requirements'])} new approval requirement(s)")
+                if summary_parts:
+                    st.info(", ".join(summary_parts))
+                else:
+                    st.info("No changes detected")
+        else:
+            st.info("+2 escalation triggers, -1 tool")
     else:
         st.write("**CUSTOM**")
 

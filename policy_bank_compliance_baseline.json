@@ -1,0 +1,55 @@
+{
+  "policy_id": "bank_compliance_baseline",
+  "policy_version": "1.0.0",
+  "created": "2024-12-20",
+  "description": "Baseline compliance policy - minimal restrictions",
+  
+  "dials": {
+    "autonomy": {
+      "level": "L3",
+      "label": "full_autonomy",
+      "description": "Agent can act autonomously without approval"
+    },
+    "tool_access": {
+      "level": "L3", 
+      "label": "full_write",
+      "description": "Agent can write and execute without restrictions"
+    },
+    "personalization": {
+      "level": "L3",
+      "label": "account_level",
+      "description": "Per-user preferences stored"
+    },
+    "memory": {
+      "level": "L3",
+      "label": "persistent_user_controlled",
+      "description": "Persistent memory with user control"
+    },
+    "inter_agent": {
+      "level": "L1",
+      "label": "none",
+      "description": "No inter-agent communication"
+    }
+  },
+
+  "gates": {
+    "S-O": {
+      "name": "System Outbound",
+      "direction": "agent_to_system",
+      "allow": [
+        {"action": "read", "target": "sharepoint"},
+        {"action": "read", "target": "occ_fdic_db"},
+        {"action": "write", "target": "draft_doc"},
+        {"action": "execute", "target": "jira_create_task"}
+      ],
+      "controls": [
+        {"type": "log", "params": {"capture": ["tool_call", "params", "result"]}}
+      ],
+      "deny": []
+    }
+  },
+
+  "overlays_enabled": [],
+  "overlays": {}
+}
+
