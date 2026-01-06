@@ -481,6 +481,38 @@ def render_enforcement_pipeline_enhanced(trace_data: Dict[str, Any]):
                     st.error(f"**{gate_num} {info['name']}**\n{info['desc']}\n**DENY**")
                 else:
                     st.write(f"**{gate_num} {info['name']}**\n{info['desc']}\n**PENDING**")
+                
+                # Show matched rules for Gate 4 (Policy Lookup)
+                if gate_num == 4:
+                    matched_rules = gate_result.get("matched_rules", [])
+                    verdict_rule = gate_result.get("verdict_rule") or gate_result.get("signals", {}).get("verdict_rule")
+                    
+                    if matched_rules:
+                        with st.expander("View Matched Rules", expanded=False):
+                            for rule in matched_rules:
+                                rule_id = rule.get("rule_id", "Unknown")
+                                is_baseline = rule.get("baseline", False)
+                                clause_ref = rule.get("policy_clause_ref", "")
+                                description = rule.get("description", "")
+                                
+                                # Highlight the verdict rule
+                                is_verdict_rule = verdict_rule and rule_id == verdict_rule.get("rule_id")
+                                
+                                # Display rule with badge
+                                if is_baseline:
+                                    rule_text = f"**Matched Rule:** {rule_id} 🔒 **BASELINE**"
+                                else:
+                                    rule_text = f"**Matched Rule:** {rule_id} ⚙️ **CUSTOM**"
+                                
+                                if is_verdict_rule:
+                                    rule_text = f"**→ {rule_text}** (Verdict Rule)"
+                                
+                                st.markdown(rule_text)
+                                
+                                if clause_ref:
+                                    st.caption(f"Clause: {clause_ref}")
+                                if description:
+                                    st.caption(description)
             else:
                 st.write(f"**{gate_num} {info['name']}**\n{info['desc']}\n**PENDING**")
     
@@ -636,14 +668,39 @@ def compare_policies(baseline_policy: Dict[str, Any], current_policy: Dict[str, 
 
 
 def render_policy_diff(baseline_policy: Optional[Dict[str, Any]] = None, current_policy: Optional[Dict[str, Any]] = None):
-    """Render policy diff section"""
+    """Render policy diff section with Baseline vs Custom rule management"""
     st.markdown("### Policy Diff (vs Baseline):")
     
-    # Badge selector
-    policy_mode = st.radio("Policy Mode", ["BASELINE", "CUSTOM"], horizontal=True, key="policy_mode_selector")
+    # Policy View selector - renamed from Policy Mode
+    policy_view = st.radio(
+        "Policy View", 
+        ["Baseline Only", "Custom"], 
+        horizontal=True, 
+        key="policy_view_selector"
+    )
     
-    if policy_mode == "BASELINE":
-        # Show summary text instead of "BASELINE (selected)"
+    # Initialize rule_states if not exists
+    if "rule_states" not in st.session_state:
+        st.session_state.rule_states = {}
+    
+    # Get rules from current policy (or baseline if no current policy)
+    rules = []
+    if current_policy and "rules" in current_policy:
+        rules = current_policy["rules"]
+    elif baseline_policy and "rules" in baseline_policy:
+        rules = baseline_policy["rules"]
+    
+    # Initialize rule states from policy
+    for rule in rules:
+        rule_id = rule.get("rule_id")
+        if rule_id and rule_id not in st.session_state.rule_states:
+            st.session_state.rule_states[rule_id] = {
+                "enabled": rule.get("enabled", True),
+                "baseline": rule.get("baseline", False)
+            }
+    
+    if policy_view == "Baseline Only":
+        # Show summary text
         if baseline_policy and current_policy:
             current_policy_id = current_policy.get("policy_id", "")
             baseline_policy_id = baseline_policy.get("policy_id", "")
@@ -666,8 +723,69 @@ def render_policy_diff(baseline_policy: Optional[Dict[str, Any]] = None, current
                     st.info("No changes detected")
         else:
             st.info("+2 escalation triggers, -1 tool")
-    else:
-        st.write("**CUSTOM**")
+    
+    elif policy_view == "Custom":
+        # Show rule list with badges and toggles
+        if rules:
+            st.markdown("#### Rule List")
+            for rule in rules:
+                rule_id = rule.get("rule_id", "Unknown")
+                is_baseline = rule.get("baseline", False)
+                description = rule.get("description", "")
+                severity = rule.get("severity", "")
+                clause_ref = rule.get("policy_clause_ref", "")
+                
+                # Create columns for rule display
+                col1, col2, col3 = st.columns([3, 1, 1])
+                
+                with col1:
+                    # Rule ID and description
+                    rule_text = f"**{rule_id}** - {description}"
+                    if clause_ref:
+                        rule_text += f" ({clause_ref})"
+                    st.write(rule_text)
+                
+                with col2:
+                    # Badge
+                    if is_baseline:
+                        st.markdown("🔒 **BASELINE**")
+                    else:
+                        st.markdown("⚙️ **CUSTOM**")
+                
+                with col3:
+                    # Toggle (disabled for baseline rules)
+                    if is_baseline:
+                        # Baseline rules are always enabled, show disabled toggle
+                        st.checkbox(
+                            "Enabled",
+                            value=True,
+                            disabled=True,
+                            key=f"rule_toggle_{rule_id}",
+                            help="Regulatory floor — cannot be disabled"
+                        )
+                    else:
+                        # Custom rules can be toggled
+                        current_state = st.session_state.rule_states.get(rule_id, {}).get("enabled", rule.get("enabled", True))
+                        new_state = st.checkbox(
+                            "Enabled",
+                            value=current_state,
+                            disabled=False,
+                            key=f"rule_toggle_{rule_id}",
+                            help="Organizational policy — can be adjusted"
+                        )
+                        # Update session state if changed
+                        if new_state != current_state:
+                            st.session_state.rule_states[rule_id] = {
+                                "enabled": new_state,
+                                "baseline": False
+                            }
+                            # Update the rule in the policy (in memory)
+                            rule["enabled"] = new_state
+                            st.rerun()
+                
+                st.markdown("---")
+        else:
+            st.info("No rules defined in policy")
 
 
 def render_surface_activation_compact(surfaces_touched: Dict[str, bool], trace_data: Dict[str, Any] = None):
