@@ -177,6 +177,39 @@
   },
 
   "overlays_enabled": [],
-  "overlays": {}
+  "overlays": {},
+  
+  "rules": [
+    {
+      "rule_id": "R-001",
+      "baseline": true,
+      "enabled": true,
+      "description": "Require authentication for all user inputs",
+      "severity": "deny",
+      "policy_clause_ref": "§1.1",
+      "applies_to_gate": "U-I",
+      "applies_to_control": "auth"
+    },
+    {
+      "rule_id": "R-011",
+      "baseline": true,
+      "enabled": true,
+      "description": "Block delete operations on all records",
+      "severity": "deny",
+      "policy_clause_ref": "§3.2",
+      "applies_to_gate": "S-O",
+      "applies_to_control": "deny_pattern_check"
+    },
+    {
+      "rule_id": "R-145",
+      "baseline": false,
+      "enabled": true,
+      "description": "Require approval for PII export operations",
+      "severity": "escalate",
+      "policy_clause_ref": "§4.2",
+      "applies_to_gate": "Gate 3",
+      "applies_to_control": "data_classification"
+    }
+  ]
 }
 

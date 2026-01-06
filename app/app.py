@@ -61,6 +61,9 @@ if "simulate_mode" not in st.session_state:
 if "nav_tab" not in st.session_state:
     st.session_state.nav_tab = "Pipeline Trace"
 
+if "rule_states" not in st.session_state:
+    st.session_state.rule_states = {}
+
 
 def get_policy_files():
     """Get all JSON policy files from root directory"""
@@ -124,6 +127,18 @@ def load_policy_summary():
     if "enforcer" not in st.session_state or st.session_state.enforcer is None:
         st.session_state.enforcer = load_policy_file(selected_policy)
         st.session_state.selected_policy = selected_policy
+    
+    # Initialize rule states from policy
+    if st.session_state.enforcer:
+        policy = st.session_state.enforcer.policy
+        if "rules" in policy:
+            for rule in policy["rules"]:
+                rule_id = rule.get("rule_id")
+                if rule_id and rule_id not in st.session_state.rule_states:
+                    st.session_state.rule_states[rule_id] = {
+                        "enabled": rule.get("enabled", True),
+                        "baseline": rule.get("baseline", False)
+                    }
     
     if st.session_state.enforcer:
         policy = st.session_state.enforcer.policy
@@ -542,7 +557,7 @@ with nav_tab2:
                         col_approve, col_reject, col_cancel = st.columns(3)
                         
                         with col_approve:
-                            if st.button("✓ Approve", key=f"approve_{idx}", type="primary"):
+                            if st.button("✓ Approve", key=f"approve_tab2_{idx}", type="primary"):
                                 approval["resolution"] = "APPROVED"
                                 approval["approved_by"] = "current_user"
                                 approval["approved_at"] = datetime.utcnow().isoformat() + "Z"
@@ -576,8 +591,8 @@ with nav_tab2:
                                 st.rerun()
                         
                         with col_reject:
-                            if st.button("✗ Reject", key=f"reject_{idx}"):
-                                comment = st.session_state.get(f"reject_reason_{idx}", "")
+                            if st.button("✗ Reject", key=f"reject_tab2_{idx}"):
+                                comment = st.session_state.get(f"reject_reason_tab2_{idx}", "")
                                 approval["resolution"] = "REJECTED"
                                 approval["rejected_by"] = "current_user"
                                 approval["rejected_at"] = datetime.utcnow().isoformat() + "Z"
@@ -613,12 +628,12 @@ with nav_tab2:
                                 st.rerun()
                         
                         with col_cancel:
-                            if st.button("Cancel", key=f"cancel_{idx}"):
+                            if st.button("Cancel", key=f"cancel_tab2_{idx}"):
                                 st.session_state[f"reviewing_{idx}"] = False
                                 st.rerun()
                         
                         # Rejection reason text input below the buttons
-                        comment = st.text_input("Rejection Reason", key=f"reject_reason_{idx}", placeholder="Enter reason for rejection (optional)")
+                        comment = st.text_input("Rejection Reason", key=f"reject_reason_tab2_{idx}", placeholder="Enter reason for rejection (optional)")
 
 with nav_tab3:
     st.header("Approval Queue")
@@ -691,7 +706,7 @@ with nav_tab3:
                     col_approve, col_reject, col_cancel = st.columns(3)
                     
                     with col_approve:
-                        if st.button("✓ Approve", key=f"approve_{idx}", type="primary"):
+                        if st.button("✓ Approve", key=f"approve_tab3_{idx}", type="primary"):
                             approval["resolution"] = "APPROVED"
                             approval["approved_by"] = "current_user"
                             approval["approved_at"] = datetime.utcnow().isoformat() + "Z"
@@ -762,12 +777,12 @@ with nav_tab3:
                             st.rerun()
                     
                     with col_cancel:
-                        if st.button("Cancel", key=f"cancel_{idx}"):
+                        if st.button("Cancel", key=f"cancel_tab3_{idx}"):
                             st.session_state[f"reviewing_{idx}"] = False
                             st.rerun()
                     
                     # Rejection reason text input below the buttons
-                    comment = st.text_input("Rejection Reason", key=f"reject_reason_{idx}", placeholder="Enter reason for rejection (optional)")
+                    comment = st.text_input("Rejection Reason", key=f"reject_reason_tab3_{idx}", placeholder="Enter reason for rejection (optional)")
                     
                     # Close container and inject CSS to style the Approve button as green
                     st.markdown(f"""

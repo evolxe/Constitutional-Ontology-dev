@@ -7,12 +7,19 @@ import os
 import sys
 import time
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from constitutional_enforcement_interactive import ConstitutionalEnforcer, Decision, EnforcementResult
+
+# Try to import streamlit for session state access (optional)
+try:
+    import streamlit as st
+    HAS_STREAMLIT = True
+except ImportError:
+    HAS_STREAMLIT = False
 
 
 # Gate definitions
@@ -44,6 +51,91 @@ def classify_intent(user_input: str) -> str:
         return "regulatory_query"
     else:
         return "general_query"
+
+
+def get_matched_rules(request: str, intent_category: str, data_class: str, tool_name: Optional[str], enforcer: ConstitutionalEnforcer) -> List[Dict[str, Any]]:
+    """Get matched rules based on request context"""
+    matched_rules = []
+    
+    # Get rules from policy
+    policy = enforcer.policy
+    if "rules" not in policy:
+        return matched_rules
+    
+    rules = policy["rules"]
+    
+    # Get rule states (from session state if available, otherwise from policy)
+    rule_states = {}
+    if HAS_STREAMLIT and "rule_states" in st.session_state:
+        rule_states = st.session_state.rule_states
+    else:
+        # Fallback: initialize from policy
+        for rule in rules:
+            rule_id = rule.get("rule_id")
+            if rule_id:
+                rule_states[rule_id] = {
+                    "enabled": rule.get("enabled", True),
+                    "baseline": rule.get("baseline", False)
+                }
+    
+    # Match rules based on context
+    for rule in rules:
+        rule_id = rule.get("rule_id")
+        applies_to_gate = rule.get("applies_to_gate", "")
+        applies_to_control = rule.get("applies_to_control", "")
+        
+        # Check if rule is enabled (baseline rules are always enabled)
+        is_baseline = rule.get("baseline", False)
+        rule_state = rule_states.get(rule_id, {})
+        is_enabled = rule_state.get("enabled", rule.get("enabled", True)) if not is_baseline else True
+        
+        # Only include enabled rules
+        if not is_enabled:
+            continue
+        
+        # Match rules based on gate and control
+        matched = False
+        
+        # R-001: Authentication rule (Gate 1 / U-I)
+        if rule_id == "R-001" and applies_to_gate == "U-I":
+            matched = True
+        
+        # R-011: Delete operations rule (Gate 5/6 / S-O)
+        # Also matches for export operations when R-145 is disabled (baseline rule applies)
+        elif rule_id == "R-011" and applies_to_gate == "S-O":
+            # Match for delete operations
+            if tool_name and "delete" in tool_name.lower():
+                matched = True
+            # Match for export operations when R-145 is disabled (baseline rule takes precedence)
+            elif tool_name and "export" in tool_name.lower():
+                # Check if R-145 is disabled
+                r145_rule = next((r for r in rules if r.get("rule_id") == "R-145"), None)
+                if r145_rule:
+                    r145_state = rule_states.get("R-145", {})
+                    r145_enabled = r145_state.get("enabled", r145_rule.get("enabled", True)) if not r145_rule.get("baseline", False) else True
+                    # If R-145 is disabled, R-011 (baseline) applies
+                    if not r145_enabled:
+                        matched = True
+        
+        # R-145: PII export rule (Gate 3 data classification)
+        elif rule_id == "R-145" and applies_to_gate == "Gate 3" and applies_to_control == "data_classification":
+            # Match if R-145 is enabled AND (PII is detected or export tool is used)
+            rule_state = rule_states.get("R-145", {})
+            r145_enabled = rule_state.get("enabled", rule.get("enabled", True)) if not rule.get("baseline", False) else True
+            if r145_enabled and (data_class == "regulated" or (tool_name and "export" in tool_name.lower())):
+                matched = True
+        
+        if matched:
+            matched_rules.append({
+                "rule_id": rule_id,
+                "baseline": is_baseline,
+                "enabled": is_enabled,
+                "description": rule.get("description", ""),
+                "policy_clause_ref": rule.get("policy_clause_ref", ""),
+                "severity": rule.get("severity", "")
+            })
+    
+    return matched_rules
 
 
 def infer_tool_and_params(user_input: str, intent_category: str) -> tuple:
@@ -192,10 +284,25 @@ def _execute_weather_prompt(request: str, user_id: str, enforcer: Constitutional
 
 
 def _execute_export_pii_prompt(request: str, user_id: str, enforcer: ConstitutionalEnforcer) -> Dict[str, Any]:
-    """Execute pipeline for 'Export customer PII' - export_data tool → PII detected → ESCALATE"""
+    """Execute pipeline for 'Export customer PII' - export_data tool → PII detected → ESCALATE (if R-145 enabled)"""
     import time
     gate_results = []
     surfaces_touched = {"U-I": True, "U-O": False, "S-I": False, "S-O": True, "M-I": False, "M-O": False, "A-I": False, "A-O": False}
+    
+    # Check if R-145 (data sensitivity classification rule) is enabled
+    rule_r145_enabled = True  # Default to enabled
+    if HAS_STREAMLIT and "rule_states" in st.session_state:
+        rule_states = st.session_state.rule_states
+        r145_state = rule_states.get("R-145", {})
+        rule_r145_enabled = r145_state.get("enabled", True)
+    else:
+        # Fallback: check policy directly
+        policy = enforcer.policy
+        if "rules" in policy:
+            for rule in policy["rules"]:
+                if rule.get("rule_id") == "R-145":
+                    rule_r145_enabled = rule.get("enabled", True)
+                    break
     
     # Gate 1: Input Validation - PASS
     start_time = time.time()
@@ -216,61 +323,167 @@ def _execute_export_pii_prompt(request: str, user_id: str, enforcer: Constitutio
         "decision_reason": None, "processing_time_ms": processing_time
     })
     
-    # Gate 3: Data Classification - PII detected, but allow to continue for escalation
+    # Gate 3: Data Classification - Check R-145 rule state
     start_time = time.time()
     processing_time = (time.time() - start_time) * 1000
+    
+    # If R-145 is enabled, classify as regulated (PII detected)
+    # If R-145 is disabled, classify as unregulated (no PII detection)
+    if rule_r145_enabled:
+        has_pii = True
+        dlp_scan_passed = False
+        data_classification = "regulated"
+    else:
+        has_pii = False
+        dlp_scan_passed = True
+        data_classification = "unregulated"
+    
     gate_results.append({
         "gate_num": 3, "gate_name": "Data Classification", "status": "passed", "verdict": "ALLOW",
-        "signals": {"has_pii": True, "dlp_scan_passed": False, "data_classification": "regulated"},
+        "signals": {"has_pii": has_pii, "dlp_scan_passed": dlp_scan_passed, "data_classification": data_classification},
         "policies": [], "decision_reason": None, "processing_time_ms": processing_time
     })
     
     # Gate 4: Policy Lookup - PASS
     start_time = time.time()
+    tool_name = "export_data"  # Known for this prompt
+    intent_category = "information_retrieval"
+    matched_rules = get_matched_rules(request, intent_category, data_classification, tool_name, enforcer)
+    
+    # Determine which rule derived the verdict
+    verdict_rule = None
+    if matched_rules:
+        # If R-145 is in matched rules and enabled, it derives the verdict
+        r145_rule = next((r for r in matched_rules if r.get("rule_id") == "R-145"), None)
+        if r145_rule and r145_rule.get("enabled", True):
+            verdict_rule = r145_rule
+        else:
+            # Otherwise, use the first baseline rule (e.g., R-011)
+            baseline_rule = next((r for r in matched_rules if r.get("baseline", False)), None)
+            if baseline_rule:
+                verdict_rule = baseline_rule
+            else:
+                # Fallback to first matched rule
+                verdict_rule = matched_rules[0]
+    
+    # Determine applicable policies based on data classification
+    applicable_policies = []
+    if data_classification == "regulated":
+        applicable_policies.append("EU_AIACT_HR_v0")
+    
+    # Create verdict derivation message
+    decision_reason = None
+    if verdict_rule:
+        rule_id = verdict_rule.get("rule_id", "Unknown")
+        is_baseline = verdict_rule.get("baseline", False)
+        if is_baseline:
+            decision_reason = f"Verdict derived from BASELINE rule {rule_id}"
+        else:
+            decision_reason = f"Verdict derived from CUSTOM rule {rule_id}"
+    
     processing_time = (time.time() - start_time) * 1000
     gate_results.append({
         "gate_num": 4, "gate_name": "Policy Lookup", "status": "passed", "verdict": "ALLOW",
-        "signals": {"applicable_policies": ["EU_AIACT_HR_v0"], "policy_gates": list(enforcer.policy.get("gates", {}).keys())},
-        "policies": ["EU_AIACT_HR_v0"], "decision_reason": None, "processing_time_ms": processing_time
+        "signals": {
+            "applicable_policies": applicable_policies, 
+            "policy_gates": list(enforcer.policy.get("gates", {}).keys()),
+            "matched_rules": matched_rules,
+            "verdict_rule": verdict_rule
+        },
+        "policies": applicable_policies, 
+        "decision_reason": decision_reason, 
+        "processing_time_ms": processing_time,
+        "matched_rules": matched_rules,
+        "verdict_rule": verdict_rule
     })
     
-    # Gate 5: Permission Check - export_data tool requires approval → ESCALATE
+    # Gate 5 & 6: Permission Check and Action Approval
+    # If R-145 is disabled and data is unregulated, allow without escalation
+    # If R-145 is enabled and data is regulated, require approval (escalate)
     start_time = time.time()
-    tool_name = "export_data"
     tool_params = {"format": "csv", "scope": "all"}
     enforcement_result = enforcer.pre_tool_call(tool_name, tool_params, user_id)
     processing_time = (time.time() - start_time) * 1000
+    
+    # Determine which rule derived the verdict
+    if rule_r145_enabled and data_classification == "regulated":
+        # R-145 enabled: require approval → ESCALATE
+        gate5_status = "escalated"
+        gate5_verdict = "ESCALATE"
+        gate6_status = "escalated"
+        gate6_verdict = "ESCALATE"
+        final_verdict = "ESCALATE"
+        # Find R-145 in matched rules to get its details
+        r145_rule = next((r for r in matched_rules if r.get("rule_id") == "R-145"), None)
+        if r145_rule:
+            decision_reason = f"Verdict derived from: CUSTOM rule R-145 (enabled=true) - {r145_rule.get('description', 'PII export requires approval')}"
+        else:
+            decision_reason = "Verdict derived from: CUSTOM rule R-145 (enabled=true)"
+    else:
+        # R-145 disabled: allow without escalation
+        # Check if a baseline rule applies (e.g., R-011)
+        baseline_rule = next((r for r in matched_rules if r.get("baseline", False)), None)
+        gate5_status = "passed"
+        gate5_verdict = "ALLOW"
+        gate6_status = "passed"
+        gate6_verdict = "ALLOW"
+        final_verdict = "ALLOW"
+        if baseline_rule:
+            decision_reason = f"Verdict derived from: BASELINE rule {baseline_rule.get('rule_id', 'R-011')}"
+        else:
+            decision_reason = "Data classified as unregulated (R-145 disabled)"
+    
     gate_results.append({
-        "gate_num": 5, "gate_name": "Permission Check", "status": "escalated", "verdict": "ESCALATE",
+        "gate_num": 5, "gate_name": "Permission Check", "status": gate5_status, "verdict": gate5_verdict,
         "signals": {
             "tool": tool_name, "tool_params": tool_params,
             "decision": enforcement_result.decision.value if hasattr(enforcement_result.decision, 'value') else str(enforcement_result.decision),
             "controls_applied": enforcement_result.controls_applied
         },
-        "policies": ["EU_AIACT_HR_v0"],
+        "policies": applicable_policies,
         "decision_reason": None, "processing_time_ms": processing_time
     })
     
-    # Gate 6: Action Approval - ESCALATE
+    # Gate 6: Action Approval
     start_time = time.time()
     processing_time = (time.time() - start_time) * 1000
     gate_results.append({
-        "gate_num": 6, "gate_name": "Action Approval", "status": "escalated", "verdict": "ESCALATE",
+        "gate_num": 6, "gate_name": "Action Approval", "status": gate6_status, "verdict": gate6_verdict,
         "signals": {
-            "tool": tool_name, "requires_approval": True,
+            "tool": tool_name, "requires_approval": rule_r145_enabled and data_classification == "regulated",
             "decision": enforcement_result.decision.value if hasattr(enforcement_result.decision, 'value') else str(enforcement_result.decision),
             "controls_applied": enforcement_result.controls_applied
         },
-        "policies": ["EU_AIACT_HR_v0"],
-        "decision_reason": "Human approval required", "processing_time_ms": processing_time
+        "policies": applicable_policies,
+        "decision_reason": decision_reason, "processing_time_ms": processing_time
     })
     
-    # Gate 7: Evidence Capture - PASS
+    # Gate 7: Evidence Capture - Include matched rules in evidence
     start_time = time.time()
+    # Get policy version/hash
+    policy_version = enforcer.policy.get("policy_version", "1.0.0")
+    policy_id = enforcer.policy.get("policy_id", "unknown")
+    
+    evidence_packet = {
+        "request": request,
+        "verdict": final_verdict,
+        "policy_version": policy_version,
+        "policy_id": policy_id,
+        "matched_rules": matched_rules,
+        "rule_states_at_decision": [
+            {
+                "rule_id": rule["rule_id"],
+                "baseline": rule["baseline"],
+                "enabled": rule["enabled"]
+            }
+            for rule in matched_rules
+        ]
+    }
     processing_time = (time.time() - start_time) * 1000
     gate_results.append({
         "gate_num": 7, "gate_name": "Evidence Capture", "status": "passed", "verdict": "ALLOW",
-        "signals": {"request": request, "verdict": "ESCALATE"}, "policies": ["EU_AIACT_HR_v0"],
+        "signals": evidence_packet, 
+        "policies": applicable_policies,
         "decision_reason": None, "processing_time_ms": processing_time
     })
     
@@ -279,14 +492,14 @@ def _execute_export_pii_prompt(request: str, user_id: str, enforcer: Constitutio
     processing_time = (time.time() - start_time) * 1000
     gate_results.append({
         "gate_num": 8, "gate_name": "Audit Export", "status": "passed", "verdict": "ALLOW",
-        "signals": {"evidence_packet_prepared": True}, "policies": ["EU_AIACT_HR_v0"],
+        "signals": {"evidence_packet_prepared": True}, "policies": applicable_policies,
         "decision_reason": None, "processing_time_ms": processing_time
     })
     
     return {
         "gate_results": gate_results,
         "surface_activations": surfaces_touched,
-        "final_verdict": "ESCALATE",
+        "final_verdict": final_verdict,
         "short_circuited": False,
         "tool_enforcement_result": {
             "tool": tool_name,
@@ -561,6 +774,37 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
     
     # Get policy gates that apply
     policy_gates = list(enforcer.policy.get("gates", {}).keys())
+    
+    # Get matched rules
+    tool_name, _ = infer_tool_and_params(request, intent_category)
+    matched_rules = get_matched_rules(request, intent_category, data_class, tool_name, enforcer)
+    
+    # Determine which rule derived the verdict
+    verdict_rule = None
+    if matched_rules:
+        # If R-145 is in matched rules and enabled, it derives the verdict
+        r145_rule = next((r for r in matched_rules if r.get("rule_id") == "R-145"), None)
+        if r145_rule and r145_rule.get("enabled", True):
+            verdict_rule = r145_rule
+        else:
+            # Otherwise, use the first baseline rule (e.g., R-011)
+            baseline_rule = next((r for r in matched_rules if r.get("baseline", False)), None)
+            if baseline_rule:
+                verdict_rule = baseline_rule
+            else:
+                # Fallback to first matched rule
+                verdict_rule = matched_rules[0]
+    
+    # Create verdict derivation message
+    decision_reason = None
+    if verdict_rule:
+        rule_id = verdict_rule.get("rule_id", "Unknown")
+        is_baseline = verdict_rule.get("baseline", False)
+        if is_baseline:
+            decision_reason = f"Verdict derived from BASELINE rule {rule_id}"
+        else:
+            decision_reason = f"Verdict derived from CUSTOM rule {rule_id}"
+    
     processing_time = (time.time() - start_time) * 1000
     
     gate4_result = {
@@ -570,11 +814,15 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
         "verdict": "ALLOW",
         "signals": {
             "applicable_policies": applicable_policies,
-            "policy_gates": policy_gates
+            "policy_gates": policy_gates,
+            "matched_rules": matched_rules,
+            "verdict_rule": verdict_rule
         },
         "policies": applicable_policies,
-        "decision_reason": None,
-        "processing_time_ms": processing_time
+        "decision_reason": decision_reason,
+        "processing_time_ms": processing_time,
+        "matched_rules": matched_rules,
+        "verdict_rule": verdict_rule
     }
     gate_results.append(gate4_result)
     
@@ -691,6 +939,14 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
     
     # Gate 7: Evidence Capture
     start_time = time.time()
+    # Get matched rules from Gate 4
+    gate4_result = next((g for g in gate_results if g.get("gate_num") == 4), None)
+    matched_rules = gate4_result.get("matched_rules", []) if gate4_result else []
+    
+    # Get policy version/hash
+    policy_version = enforcer.policy.get("policy_version", "1.0.0")
+    policy_id = enforcer.policy.get("policy_id", "unknown")
+    
     # Evidence is captured through the audit log
     evidence_captured = {
         "request": request,
@@ -698,7 +954,18 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
         "intent": intent_category,
         "data_class": data_class,
         "verdict": verdict,
-        "surfaces_activated": [k for k, v in surfaces_touched.items() if v]
+        "surfaces_activated": [k for k, v in surfaces_touched.items() if v],
+        "policy_version": policy_version,
+        "policy_id": policy_id,
+        "matched_rules": matched_rules,
+        "rule_states_at_decision": [
+            {
+                "rule_id": rule["rule_id"],
+                "baseline": rule["baseline"],
+                "enabled": rule["enabled"]
+            }
+            for rule in matched_rules
+        ]
     }
     processing_time = (time.time() - start_time) * 1000
     
