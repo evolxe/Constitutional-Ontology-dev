@@ -672,6 +672,10 @@ def render_policy_diff(baseline_policy: Optional[Dict[str, Any]] = None, current
     st.markdown("### Policy Diff (vs Baseline):")
     
     # Policy View selector - renamed from Policy Mode
+    # Default to "Baseline Only" if not set
+    if "policy_view_selector" not in st.session_state:
+        st.session_state.policy_view_selector = "Baseline Only"
+    
     policy_view = st.radio(
         "Policy View", 
         ["Baseline Only", "Custom"], 

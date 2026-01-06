@@ -121,6 +121,9 @@ def load_policy_summary():
     if selected_policy != st.session_state.get("selected_policy"):
         st.session_state.selected_policy = selected_policy
         st.session_state.enforcer = load_policy_file(selected_policy)
+        # Reset Policy Diff radio to "Baseline Only" when policy changes
+        if "policy_view_selector" in st.session_state:
+            st.session_state.policy_view_selector = "Baseline Only"
         st.rerun()
     
     # Initialize enforcer if not already loaded
