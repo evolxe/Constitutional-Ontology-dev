@@ -46,7 +46,10 @@ if not all_traces:
     st.stop()
 
 # Trace selector
-trace_options = {f"{trace.trace_id} - {trace.timestamp[:19]}": trace.trace_id for trace in all_traces}
+trace_options = {
+    f"{trace['trace_id']} - {trace['timestamp'][:19]}": trace["trace_id"]
+    for trace in all_traces
+}
 selected_trace_label = st.selectbox(
     "Select Trace",
     options=list(trace_options.keys()),
