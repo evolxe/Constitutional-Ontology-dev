@@ -126,19 +126,24 @@ with col1:
             evidence_packet["policy_hash"] = str(hash(policy_str))
 
         st.session_state["evidence_packet"] = evidence_packet
+        st.success("Evidence packet generated!")
 
-with col2:
+    # Download button in Export Options section
     if "evidence_packet" in st.session_state:
-        st.markdown("#### Evidence Packet")
-        st.json(st.session_state["evidence_packet"])
-
+        st.markdown("---")
         evidence_json = json.dumps(st.session_state["evidence_packet"], indent=2)
         st.download_button(
             label="Download Evidence Packet (JSON)",
             data=evidence_json,
             file_name=f"evidence_packet_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json",
-            mime="application/json"
+            mime="application/json",
+            key="download_evidence_packet"
         )
+
+with col2:
+    if "evidence_packet" in st.session_state:
+        st.markdown("#### Evidence Packet")
+        st.json(st.session_state["evidence_packet"])
 
 # Navigation
 st.markdown("---")

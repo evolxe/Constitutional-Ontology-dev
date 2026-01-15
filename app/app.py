@@ -282,25 +282,6 @@ with st.sidebar:
     load_policy_summary()
     
     st.sidebar.markdown("---")
-    
-    # Navigation to other pages
-    st.sidebar.markdown("### Navigation")
-    if st.sidebar.button("🧭 Pipeline Trace", use_container_width=True):
-        st.switch_page("pages/pipeline_trace.py")
-    if st.sidebar.button("✅ Approval Queue", use_container_width=True):
-        st.switch_page("pages/approval_queue.py")
-    if st.sidebar.button("📜 Audit Log", use_container_width=True):
-        st.switch_page("pages/audit_log.py")
-    if st.sidebar.button("📦 Export", use_container_width=True):
-        st.switch_page("pages/export.py")
-    if st.sidebar.button("📄 Soft Ontology", use_container_width=True):
-        st.switch_page("pages/soft_ontology.py")
-    if st.sidebar.button("⚙️ Policy Editor", use_container_width=True):
-        st.switch_page("pages/policy_editor.py")
-    if st.sidebar.button("🚪 Gate Details", use_container_width=True):
-        st.switch_page("pages/gate_details.py")
-    
-    st.sidebar.markdown("---")
     st.sidebar.markdown("### Gate Legend")
     legend = get_gate_legend()
     for gate_name, description in legend.items():
