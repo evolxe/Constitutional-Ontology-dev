@@ -338,9 +338,10 @@ if st.session_state.text_analysis:
         st.markdown("#### Generated Policy")
         policy_filename = os.path.basename(st.session_state.generated_policy_path)
         
-        st.success(f"✅ Policy generated: `{policy_filename}`")
+        st.success(f"✅ Policy generated and saved: `{policy_filename}`")
+        st.info(f"📁 Saved to: `{st.session_state.generated_policy_path}`")
         
-        col_open, col_view = st.columns(2)
+        col_open, col_view, col_download = st.columns(3)
         
         with col_open:
             if st.button("📝 Open in Policy Editor", type="primary", use_container_width=True):
@@ -354,11 +355,26 @@ if st.session_state.text_analysis:
         with col_view:
             if st.button("👁️ Preview Policy", use_container_width=True):
                 try:
-                    with open(st.session_state.generated_policy_path, 'r') as f:
+                    with open(st.session_state.generated_policy_path, 'r', encoding='utf-8') as f:
                         policy_data = json.load(f)
                     st.json(policy_data)
                 except Exception as e:
                     st.error(f"Failed to load policy: {str(e)}")
+        
+        with col_download:
+            try:
+                with open(st.session_state.generated_policy_path, 'r', encoding='utf-8') as f:
+                    policy_json_data = f.read()
+                
+                st.download_button(
+                    label="💾 Download JSON",
+                    data=policy_json_data,
+                    file_name=policy_filename,
+                    mime="application/json",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"Failed to prepare download: {str(e)}")
 else:
     st.info("Please analyze text first using the '🔍 Analyze Text Intent' button above to begin policy generation.")
 
