@@ -22,7 +22,7 @@ st.set_page_config(
 )
 
 st.title("⚙️ Policy Editor")
-st.caption("Edit policy rules and modify gate configurations")
+st.caption("Edit policy JSON directly with auto-formatting")
 
 st.markdown("---")
 
@@ -77,95 +77,39 @@ if not policy:
 
 st.markdown("---")
 
-# Policy metadata
-st.markdown("### Policy Metadata")
-col_meta1, col_meta2 = st.columns(2)
+# Initialize session state for JSON editor
+if "editor_json_content" not in st.session_state or st.session_state.get("editor_selected_policy") != selected_policy:
+    # Format JSON with proper indentation when loading
+    st.session_state.editor_json_content = json.dumps(policy, indent=2)
+    st.session_state.editor_selected_policy = selected_policy
 
-with col_meta1:
-    policy_id = st.text_input("Policy ID", value=policy.get("policy_id", ""), key="editor_policy_id")
-    policy_version = st.text_input("Version", value=policy.get("policy_version", ""), key="editor_policy_version")
+# JSON Editor Section
+st.markdown("### JSON Editor")
+st.caption("Edit the policy JSON directly. Formatting is automatically maintained.")
 
-with col_meta2:
-    description = st.text_area("Description", value=policy.get("description", ""), key="editor_description", height=100)
-
-st.markdown("---")
-
-# Rules section
-st.markdown("### Policy Rules")
-
-# Initialize rule states if not exists
-if "editor_rule_states" not in st.session_state:
-    st.session_state.editor_rule_states = {}
-
-rules = policy.get("rules", [])
-
-if not rules:
-    st.info("No rules defined in this policy.")
+# If we just reset, clear the widget key to force it to use the new value
+if st.session_state.get("just_reset", False):
+    # Delete the widget key to force reset
+    if "json_editor_text" in st.session_state:
+        del st.session_state.json_editor_text
+    # Use the session state content directly
+    current_content = st.session_state.editor_json_content
 else:
-    st.write(f"**{len(rules)} rule(s) defined**")
-    
-    # Rule list with editing capabilities
-    for idx, rule in enumerate(rules):
-        with st.expander(f"Rule {idx + 1}: {rule.get('rule_id', 'Unknown')}", expanded=False):
-            col_rule1, col_rule2 = st.columns([3, 1])
-            
-            with col_rule1:
-                rule_id = st.text_input("Rule ID", value=rule.get("rule_id", ""), key=f"rule_id_{idx}")
-                description = st.text_area("Description", value=rule.get("description", ""), key=f"rule_desc_{idx}", height=80)
-                clause_ref = st.text_input("Policy Clause Reference", value=rule.get("policy_clause_ref", ""), key=f"rule_clause_{idx}")
-                severity = st.selectbox("Severity", ["low", "medium", "high", "critical"], 
-                                       index=["low", "medium", "high", "critical"].index(rule.get("severity", "medium")) if rule.get("severity") in ["low", "medium", "high", "critical"] else 1,
-                                       key=f"rule_severity_{idx}")
-            
-            with col_rule2:
-                is_baseline = rule.get("baseline", False)
-                if is_baseline:
-                    st.markdown("🔒 **BASELINE**")
-                    st.caption("Regulatory floor — cannot be modified")
-                else:
-                    st.markdown("⚙️ **CUSTOM**")
-                    st.caption("Organizational policy")
-                
-                enabled = st.checkbox("Enabled", value=rule.get("enabled", True), key=f"rule_enabled_{idx}", disabled=is_baseline)
-                
-                if not is_baseline:
-                    if st.button("Delete Rule", key=f"delete_rule_{idx}", type="secondary"):
-                        rules.pop(idx)
-                        st.success("Rule deleted (changes not saved yet)")
-                        st.rerun()
-            
-            st.markdown("---")
+    # Use session state, but allow widget to maintain its own state
+    current_content = st.session_state.editor_json_content
 
-st.markdown("---")
+# Get the current JSON content from session state
+json_content = st.text_area(
+    "Policy JSON",
+    value=current_content,
+    height=600,
+    key="json_editor_text",
+    help="Edit the JSON directly. The formatting will be preserved when you save."
+)
 
-# Gate modification section
-st.markdown("### Gate Configuration")
-
-gate_tabs = st.tabs(["Gate 1-4 (Pre-Flight)", "Gate 5-6 (Verdict)", "Gate 7-8 (Evidence)"])
-
-with gate_tabs[0]:
-    st.markdown("#### Pre-Flight Gates")
-    st.info("Gates 1-4: Input Validation, Intent Classification, Data Classification, Policy Lookup")
-    st.caption("These gates perform validation and classification before making decisions.")
-    
-    # Gate-specific configuration would go here
-    st.json(policy.get("gates", {}))
-
-with gate_tabs[1]:
-    st.markdown("#### Verdict Gates")
-    st.info("Gates 5-6: Permission Check, Action Approval")
-    st.caption("These gates make the final verdict: ALLOW, ESCALATE, or DENY.")
-    
-    # Gate-specific configuration would go here
-    st.json(policy.get("gates", {}))
-
-with gate_tabs[2]:
-    st.markdown("#### Evidence Gates")
-    st.info("Gates 7-8: Evidence Capture, Audit Export")
-    st.caption("These gates capture evidence and prepare audit packets.")
-    
-    # Gate-specific configuration would go here
-    st.json(policy.get("gates", {}))
+# Update session state when content changes (but not if we just reset)
+if not st.session_state.get("just_reset", False) and json_content != st.session_state.editor_json_content:
+    st.session_state.editor_json_content = json_content
 
 st.markdown("---")
 
@@ -174,41 +118,118 @@ st.markdown("### Save Changes")
 
 col_save1, col_save2, col_save3 = st.columns(3)
 
-with col_save1:
-    if st.button("💾 Save to File", type="primary"):
-        # Update policy with edited values
-        policy["policy_id"] = policy_id
-        policy["policy_version"] = policy_version
-        policy["description"] = description
+def save_policy_json():
+    """Save the edited JSON to file with auto-formatting"""
+    try:
+        # Parse and validate JSON
+        parsed_json = json.loads(json_content)
+        
+        # Re-format with proper indentation
+        formatted_json = json.dumps(parsed_json, indent=2)
         
         # Save to file
         parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         policy_path = os.path.join(parent_dir, selected_policy)
-        try:
-            with open(policy_path, 'w') as f:
-                json.dump(policy, f, indent=2)
+        
+        with open(policy_path, 'w') as f:
+            f.write(formatted_json)
+        
+        # Update session state with formatted version
+        st.session_state.editor_json_content = formatted_json
+        
+        return True, formatted_json
+    except json.JSONDecodeError as e:
+        return False, f"Invalid JSON: {str(e)}"
+    except Exception as e:
+        return False, f"Failed to save policy: {str(e)}"
+
+with col_save1:
+    if st.button("💾 Save to File", type="primary"):
+        success, result = save_policy_json()
+        if success:
             st.success(f"Policy saved to {selected_policy}")
-        except Exception as e:
-            st.error(f"Failed to save policy: {str(e)}")
+            st.rerun()
+        else:
+            st.error(result)
 
 with col_save2:
     if st.button("📥 Export as JSON"):
-        policy_json = json.dumps(policy, indent=2)
-        st.download_button(
-            label="Download Policy JSON",
-            data=policy_json,
-            file_name=f"policy_{policy_id}_{policy_version}.json",
-            mime="application/json"
-        )
+        try:
+            # Parse and format JSON for export
+            parsed_json = json.loads(json_content)
+            policy_json = json.dumps(parsed_json, indent=2)
+            policy_id = parsed_json.get("policy_id", "policy")
+            policy_version = parsed_json.get("policy_version", "v1")
+            
+            st.download_button(
+                label="Download Policy JSON",
+                data=policy_json,
+                file_name=f"policy_{policy_id}_{policy_version}.json",
+                mime="application/json"
+            )
+        except json.JSONDecodeError as e:
+            st.error(f"Invalid JSON: {str(e)}")
+        except Exception as e:
+            st.error(f"Failed to export: {str(e)}")
 
 with col_save3:
     if st.button("🔄 Reset Changes"):
-        st.session_state.editor_selected_policy = None
-        st.rerun()
+        # Always reload from file, regardless of current editor content errors
+        try:
+            # Read raw file content first
+            parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            policy_path = os.path.join(parent_dir, selected_policy)
+            
+            with open(policy_path, 'r') as f:
+                file_content = f.read()
+            
+            # Try to parse and format, but if it fails, use raw content
+            try:
+                policy = json.loads(file_content)
+                # Format it nicely
+                formatted_content = json.dumps(policy, indent=2)
+            except json.JSONDecodeError:
+                # If file itself has JSON errors, use raw content
+                formatted_content = file_content
+                st.warning("File contains JSON errors, but content has been reset from file")
+            
+            # Update session state - the text_area will use this value on rerun
+            st.session_state.editor_json_content = formatted_content
+            st.session_state.just_reset = True  # Flag to indicate we just reset
+            
+            st.success("Changes reset to original file")
+            st.markdown(
+                '<div style="background-color: #fff3cd; color: #856404; padding: 1rem; border-radius: 0.25rem; border: 1px solid #ffeaa7; margin-top: 1rem;">'
+                '<strong>⚠️ Page refresh required:</strong> Please refresh the page for the changes to take effect in the editor.'
+                '</div>',
+                unsafe_allow_html=True
+            )
+            st.rerun()
+        except FileNotFoundError:
+            st.error(f"Policy file not found: {selected_policy}")
+        except Exception as e:
+            st.error(f"Failed to reload policy: {str(e)}")
 
-# Warning about baseline rules
+# JSON Validation Status
 st.markdown("---")
-st.warning("⚠️ **Note:** Baseline rules (marked with 🔒) cannot be disabled or deleted as they represent regulatory requirements. Only custom rules can be modified.")
+# Only validate if we haven't just reset (skip validation during reset to avoid showing file errors)
+if not st.session_state.get("just_reset", False):
+    # Validate the current editor content
+    try:
+        json.loads(json_content)
+        st.success("✓ Valid JSON")
+    except json.JSONDecodeError as e:
+        st.error(f"✗ Invalid JSON: {str(e)}")
+        st.caption("Please fix JSON syntax errors before saving.")
+else:
+    # Just reset - clear the flag and show highlighted refresh message
+    st.session_state.just_reset = False
+    st.markdown(
+        '<div style="background-color: #fff3cd; color: #856404; padding: 1rem; border-radius: 0.25rem; border: 1px solid #ffeaa7; margin-top: 1rem;">'
+        '<strong>⚠️ Page refresh required:</strong> Please refresh the page for the changes to take effect in the editor.'
+        '</div>',
+        unsafe_allow_html=True
+    )
 
 # Navigation
 st.markdown("---")
