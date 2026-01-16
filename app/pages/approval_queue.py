@@ -32,6 +32,9 @@ if "trace_manager" not in st.session_state:
 if "pending_approvals" not in st.session_state:
     st.session_state.pending_approvals = []
 
+if "mock_pending_approvals" not in st.session_state:
+    st.session_state.mock_pending_approvals = []
+
 trace_manager = st.session_state.trace_manager
 
 st.title("✅ Approval Queue")
@@ -39,9 +42,8 @@ st.caption("View and manage pending approval requests")
 
 st.markdown("---")
 
-# Get mock approvals if in simulate mode
-mock_pending_approvals = []
-if st.session_state.get("simulate_mode", True) and not st.session_state.pending_approvals:
+# Initialize mock approvals in session state if in simulate mode and not already initialized
+if st.session_state.get("simulate_mode", True) and not st.session_state.mock_pending_approvals:
     # Create mock approvals for demo
     mock_approval_data_1 = {
         "trace_id": "abc-123-def",
@@ -69,19 +71,28 @@ if st.session_state.get("simulate_mode", True) and not st.session_state.pending_
             "policy_ref": "§3.2 - High-risk tool access"
         }
     }
-    mock_pending_approvals = [mock_approval_data_1, mock_approval_data_2]
+    st.session_state.mock_pending_approvals = [mock_approval_data_1, mock_approval_data_2]
 
-# Use mock approvals in simulate mode if no real approvals exist
-pending_approvals = st.session_state.pending_approvals
-if st.session_state.get("simulate_mode", True) and not pending_approvals and mock_pending_approvals:
-    pending_approvals = mock_pending_approvals
+# Combine real and mock approvals, filtering out resolved ones
+all_pending_approvals = []
+# Add real approvals that are not resolved
+for approval in st.session_state.pending_approvals:
+    if approval.get("resolution") is None:
+        all_pending_approvals.append(approval)
+# Add mock approvals that are not resolved (only in simulate mode)
+if st.session_state.get("simulate_mode", True):
+    for approval in st.session_state.mock_pending_approvals:
+        if approval.get("resolution") is None:
+            all_pending_approvals.append(approval)
+
+pending_approvals = all_pending_approvals
 
 # If trace_id provided, show review interface
 approval_data = None
 if trace_id:
-    # Find approval in pending approvals
+    # Find approval in combined pending approvals (real + mock)
     for approval in pending_approvals:
-        if approval.get("trace_id") == trace_id:
+        if approval.get("trace_id") == trace_id and approval.get("resolution") is None:
             approval_data = approval
             break
     
@@ -109,15 +120,7 @@ if approval_data:
     
     st.markdown("---")
     
-    # Render approval modal content
-    triggered_rule, risk_rationale, scope = render_approval_modal(
-        approval_data,
-        approval_data.get("trace_id", "")
-    )
-    
-    st.markdown("---")
-    
-    # Approval actions
+    # Decision section - moved to top after title
     st.markdown("### Decision")
     
     col_approve, col_reject, col_cancel = st.columns([1, 1, 1])
@@ -156,14 +159,28 @@ if approval_data:
                     evidence
                 )
             
-            # Update trace resolution
+            # Update trace resolution - each trace maintains independent state
             trace = trace_manager.get_trace(approval_data.get("trace_id"))
             if trace:
                 trace.resolution = "APPROVED"
             
-            # Remove from pending approvals
-            if approval_data in st.session_state.pending_approvals:
-                st.session_state.pending_approvals.remove(approval_data)
+            # Remove from appropriate list (real or mock) based on trace_id
+            trace_id = approval_data.get("trace_id")
+            # Check if it's a mock approval by checking if it exists in mock_pending_approvals
+            is_mock = any(a.get("trace_id") == trace_id for a in st.session_state.mock_pending_approvals) if trace_id else False
+            
+            if is_mock and st.session_state.get("simulate_mode", True):
+                # Remove from mock approvals
+                st.session_state.mock_pending_approvals = [
+                    a for a in st.session_state.mock_pending_approvals 
+                    if a.get("trace_id") != trace_id
+                ]
+            else:
+                # Remove from real approvals
+                st.session_state.pending_approvals = [
+                    a for a in st.session_state.pending_approvals 
+                    if a.get("trace_id") != trace_id
+                ]
             
             st.success("Approval request approved!")
             st.balloons()
@@ -198,14 +215,28 @@ if approval_data:
                     evidence
                 )
             
-            # Update trace resolution
+            # Update trace resolution - each trace maintains independent state
             trace = trace_manager.get_trace(approval_data.get("trace_id"))
             if trace:
                 trace.resolution = "REJECTED"
             
-            # Remove from pending approvals
-            if approval_data in st.session_state.pending_approvals:
-                st.session_state.pending_approvals.remove(approval_data)
+            # Remove from appropriate list (real or mock) based on trace_id
+            trace_id = approval_data.get("trace_id")
+            # Check if it's a mock approval by checking if it exists in mock_pending_approvals
+            is_mock = any(a.get("trace_id") == trace_id for a in st.session_state.mock_pending_approvals) if trace_id else False
+            
+            if is_mock and st.session_state.get("simulate_mode", True):
+                # Remove from mock approvals
+                st.session_state.mock_pending_approvals = [
+                    a for a in st.session_state.mock_pending_approvals 
+                    if a.get("trace_id") != trace_id
+                ]
+            else:
+                # Remove from real approvals
+                st.session_state.pending_approvals = [
+                    a for a in st.session_state.pending_approvals 
+                    if a.get("trace_id") != trace_id
+                ]
             
             st.error("Approval request rejected!")
             st.session_state["review_trace_id"] = None
@@ -215,6 +246,14 @@ if approval_data:
         if st.button("Cancel", use_container_width=True):
             st.session_state["review_trace_id"] = None
             st.rerun()
+    
+    st.markdown("---")
+    
+    # Render approval modal content
+    triggered_rule, risk_rationale, scope = render_approval_modal(
+        approval_data,
+        approval_data.get("trace_id", "")
+    )
     
     st.markdown("---")
     
@@ -233,6 +272,49 @@ if approval_data:
 else:
     # Show approval queue list
     st.markdown("### Pending Approval Requests")
+    
+    # Add reset button for mock data in simulate mode
+    if st.session_state.get("simulate_mode", True):
+        col_reset, col_spacer = st.columns([1, 4])
+        with col_reset:
+            if st.button("🔄 Reset Mock Data", type="secondary", help="Restore mock approvals for testing"):
+                # Reinitialize mock approvals
+                mock_approval_data_1 = {
+                    "trace_id": "abc-123-def",
+                    "tool": "jira_create",
+                    "user_id": "analyst_123",
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "params": {"title": "Q4 Compliance Review", "description": "Review compliance requirements for Q4"},
+                    "resolution": None,
+                    "controls_applied": ["approval_hitl"],
+                    "evidence": {
+                        "reason": "requires_human_approval",
+                        "policy_ref": "§3.2 - High-risk tool access"
+                    }
+                }
+                mock_approval_data_2 = {
+                    "trace_id": "xyz-456-ghi",
+                    "tool": "jira_create",
+                    "user_id": "analyst_456",
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "params": {"title": "Security Audit", "description": "Perform security audit"},
+                    "resolution": None,
+                    "controls_applied": ["approval_hitl"],
+                    "evidence": {
+                        "reason": "requires_human_approval",
+                        "policy_ref": "§3.2 - High-risk tool access"
+                    }
+                }
+                st.session_state.mock_pending_approvals = [mock_approval_data_1, mock_approval_data_2]
+                # Also reset trace resolutions if they exist
+                trace1 = trace_manager.get_trace("abc-123-def")
+                if trace1:
+                    trace1.resolution = None
+                trace2 = trace_manager.get_trace("xyz-456-ghi")
+                if trace2:
+                    trace2.resolution = None
+                st.success("Mock data reset!")
+                st.rerun()
     
     if not pending_approvals:
         st.info("✅ No pending approvals. All requests have been processed.")

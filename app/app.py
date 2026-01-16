@@ -63,6 +63,12 @@ if "nav_tab" not in st.session_state:
 if "rule_states" not in st.session_state:
     st.session_state.rule_states = {}
 
+if "mock_pending_approvals" not in st.session_state:
+    st.session_state.mock_pending_approvals = []
+
+if "request_submitted_successfully" not in st.session_state:
+    st.session_state.request_submitted_successfully = False
+
 
 def get_policy_files():
     """Get all JSON policy files from root directory"""
@@ -152,7 +158,11 @@ def load_policy_summary():
         st.sidebar.markdown("---")
         st.sidebar.markdown("### System Health")
         
-        pending_count = len(st.session_state.pending_approvals)
+        # Count both real and mock pending approvals (only unresolved ones)
+        real_pending = [a for a in st.session_state.pending_approvals if a.get("resolution") is None]
+        mock_pending = [a for a in st.session_state.mock_pending_approvals if a.get("resolution") is None] if st.session_state.get("simulate_mode", True) else []
+        pending_count = len(real_pending) + len(mock_pending)
+        
         if pending_count > 0:
             st.sidebar.warning(f"⚠ {pending_count} pending approval(s)")
         else:
@@ -251,7 +261,7 @@ def process_sandbox_request(user_prompt: str, user_id: str = "analyst_123"):
     # Execute pipeline
     pipeline_results = execute_pipeline(user_prompt, user_id, enforcer)
     
-    # Create trace
+    # Create trace - each request gets its own unique trace_id
     trace = trace_manager.create_trace(
         request_data={"prompt": user_prompt, "user_id": user_id},
         pipeline_results=pipeline_results,
@@ -262,7 +272,7 @@ def process_sandbox_request(user_prompt: str, user_id: str = "analyst_123"):
     if pipeline_results.get("final_verdict") == "ESCALATE" and pipeline_results.get("tool_enforcement_result"):
         tool_result = pipeline_results.get("tool_enforcement_result")
         approval_data = {
-            "trace_id": trace.trace_id,
+            "trace_id": trace.trace_id,  # Link approval to specific trace_id
             "tool": tool_result.get("tool"),
             "user_id": user_id,
             "timestamp": trace.timestamp,
@@ -271,6 +281,7 @@ def process_sandbox_request(user_prompt: str, user_id: str = "analyst_123"):
             "controls_applied": tool_result.get("controls_applied", []),
             "evidence": tool_result.get("evidence", {})
         }
+        # Add to pending approvals - each request maintains independent state via trace_id
         st.session_state.pending_approvals.append(approval_data)
     
     return trace
@@ -345,18 +356,55 @@ if not st.session_state.simulate_mode:
         with col1:
             submit_button = st.button("Submit Request", type="primary")
         
+        with col2:
+            # Show highlighted success message next to button if submission was successful
+            if st.session_state.request_submitted_successfully:
+                st.markdown(
+                    f'<div style="background-color: #d4edda; color: #155724; padding: 0.5rem 1rem; border-radius: 0.25rem; border: 1px solid #c3e6cb; margin-top: 0.5rem;">'
+                    f'<strong>✓ Submission processed successfully!</strong> Trace ID: <code>{st.session_state.current_trace_id}</code>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+                # Reset the flag after showing (optional - can keep it visible until next submission)
+                # st.session_state.request_submitted_successfully = False
+        
         if submit_button and user_input:
             with st.spinner("Processing request through enforcement pipeline..."):
+                # Clear any mock state references when submitting in ENFORCE mode
+                # (though current_trace_id will be set to new trace anyway)
                 trace = process_sandbox_request(user_input)
                 if trace:
                     st.session_state.current_trace_id = trace.trace_id
-                    st.success(f"**Trace ID:** `{trace.trace_id}`")
+                    st.session_state.request_submitted_successfully = True
                     st.rerun()
         
         elif submit_button and not user_input:
             st.error("Please enter a user prompt before submitting.")
+            st.session_state.request_submitted_successfully = False
     
     st.markdown("---")
+
+# Initialize predefined state for simulate mode
+if st.session_state.simulate_mode:
+    trace_manager = st.session_state.trace_manager
+    # Initialize mock state if not already done or if mock approvals are empty
+    if not st.session_state.mock_pending_approvals:
+        mock_trace, mock_approval_data, mock_pending_approvals = get_mock_state()
+        # Store mock trace in trace manager (always ensure it exists)
+        if not trace_manager.get_trace(mock_trace.trace_id):
+            trace_manager.traces[mock_trace.trace_id] = mock_trace
+        # Store mock approvals in session state
+        st.session_state.mock_pending_approvals = mock_pending_approvals.copy()
+        # Set current trace to mock trace if not already set
+        if not st.session_state.current_trace_id:
+            st.session_state.current_trace_id = mock_trace.trace_id
+    # Ensure mock trace exists in trace manager even if approvals were cleared
+    elif not st.session_state.current_trace_id:
+        # Reinitialize mock trace if current_trace_id is not set
+        mock_trace, _, _ = get_mock_state()
+        if not trace_manager.get_trace(mock_trace.trace_id):
+            trace_manager.traces[mock_trace.trace_id] = mock_trace
+        st.session_state.current_trace_id = mock_trace.trace_id
 
 # Get current trace data or use mock state
 current_trace = None
@@ -374,15 +422,19 @@ if st.session_state.current_trace_id:
                 "gate_results": current_trace.pipeline_results.get("gate_results", [])
             }
         }
-elif st.session_state.simulate_mode:
-    # Use mock state in simulate mode only
-    current_trace, mock_approval_data, mock_pending_approvals = get_mock_state()
-    trace_dict = {
-        "trace_id": current_trace.trace_id,
-        "pipeline_results": {
-            "gate_results": current_trace.pipeline_results.get("gate_results", [])
+    # If in simulate mode and trace not found, reinitialize mock state
+    elif st.session_state.simulate_mode:
+        mock_trace, mock_approval_data, mock_pending_approvals = get_mock_state()
+        trace_manager.traces[mock_trace.trace_id] = mock_trace
+        st.session_state.mock_pending_approvals = mock_pending_approvals.copy()
+        st.session_state.current_trace_id = mock_trace.trace_id
+        current_trace = mock_trace
+        trace_dict = {
+            "trace_id": current_trace.trace_id,
+            "pipeline_results": {
+                "gate_results": current_trace.pipeline_results.get("gate_results", [])
+            }
         }
-    }
 
 # Cognitive Onramp - Hero Section (Full Width)
 if current_trace:
@@ -424,16 +476,23 @@ st.markdown("### ⚠️ Escalation Details")
 if current_trace and trace_dict:
     approval_data = None
     if current_trace.verdict == "ESCALATE":
-        # Use mock approval data if in simulate mode, otherwise find from pending approvals
-        if st.session_state.simulate_mode and mock_approval_data:
-            approval_data = mock_approval_data
-        else:
-            # Find matching approval data
+        # Find matching approval data from either mock or real approvals
+        if st.session_state.simulate_mode:
+            # Check mock approvals first (only in simulate mode)
+            for approval in st.session_state.mock_pending_approvals:
+                if approval.get("trace_id") == current_trace.trace_id and approval.get("resolution") is None:
+                    approval_data = approval
+                    break
+        # Check real approvals (for ENFORCE mode or if no mock approval found)
+        if not approval_data:
             for approval in st.session_state.pending_approvals:
                 if approval.get("trace_id") == current_trace.trace_id:
                     approval_data = approval
                     break
-    render_escalation_details(trace_dict, approval_data)
+    # Always render escalation details if we have a trace with ESCALATE verdict
+    # This ensures the section is populated in ENFORCE mode, even if approval_data hasn't been found yet
+    if current_trace.verdict == "ESCALATE":
+        render_escalation_details(trace_dict, approval_data)
 else:
     st.info("No escalation details available. Submit a request that triggers escalation to see details here.")
 
