@@ -43,7 +43,7 @@ def render_pipeline_flow(trace_data: Dict[str, Any], expandable: bool = True):
     """Render the 8-gate pipeline as a horizontal flow diagram"""
     gate_results = trace_data.get("pipeline_results", {}).get("gate_results", [])
     
-    st.markdown("### Enforcement Pipeline (8-gate runtime sequence)")
+    st.markdown("### Enforcement Pipeline")
     st.caption("Temporal sequence: what happened step-by-step")
     
     # Color scheme by phase
@@ -148,7 +148,7 @@ def render_pipeline_flow(trace_data: Dict[str, Any], expandable: bool = True):
 
 def render_surface_activation(surfaces_touched: Dict[str, bool], trace_data: Dict[str, Any] = None):
     """Render the 4×2 Trust Surfaces grid"""
-    st.markdown("### Surface Activation (interaction points touched)")
+    st.markdown("### Surface Activation")
     st.caption("Spatial boundaries: where governance applied")
     
     surface_labels = {
@@ -460,7 +460,7 @@ def render_cognitive_onramp(surfaces_touched: Dict[str, bool], gate_results: Lis
 
 def render_enforcement_pipeline_enhanced(trace_data: Dict[str, Any]):
     """Render enhanced enforcement pipeline with 8 steps in a 4x2 grid"""
-    st.markdown("### Enforcement Pipeline (8-gate runtime sequence)")
+    st.markdown("### Enforcement Pipeline")
     st.caption("Temporal sequence: what happened step-by-step")
     
     gate_results = trace_data.get("pipeline_results", {}).get("gate_results", [])
@@ -477,24 +477,56 @@ def render_enforcement_pipeline_enhanced(trace_data: Dict[str, Any]):
     ]
     
     # Fixed height for gate tiles - ensure all cards are same height
+    # Use comprehensive CSS to target all Streamlit widget types
     tile_style = """
     <style>
-    /* Target all block containers in columns (gate cards) */
+    /* Target the main block container in each column */
     div[data-testid="column"] > div > div > div[data-baseweb="block"] {
-        min-height: 140px !important;
-        max-height: 140px !important;
-        height: 140px !important;
+        min-height: 150px !important;
+        max-height: 150px !important;
+        height: 150px !important;
+        display: flex !important;
+        flex-direction: column !important;
     }
-    /* Target the inner content divs to center content vertically */
-    div[data-testid="column"] > div > div > div[data-baseweb="block"] > div {
-        min-height: 140px !important;
-        max-height: 140px !important;
-        height: 140px !important;
+    /* Target Streamlit alert containers (st.success, st.warning, st.error) - they have role="alert" */
+    div[data-testid="column"] div[data-baseweb="block"][role="alert"],
+    div[data-testid="column"] div[role="alert"] {
+        min-height: 150px !important;
+        max-height: 150px !important;
+        height: 150px !important;
         display: flex !important;
         flex-direction: column !important;
         justify-content: center !important;
         align-items: flex-start !important;
-        overflow: hidden !important;
+    }
+    /* Target the content inside alert containers */
+    div[data-testid="column"] div[role="alert"] > div,
+    div[data-testid="column"] div[data-baseweb="block"][role="alert"] > div {
+        min-height: 150px !important;
+        max-height: 150px !important;
+        height: 150px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: center !important;
+    }
+    /* Target st.write containers (for PENDING status) - they're in element-container */
+    div[data-testid="column"] > div > div > div[data-baseweb="block"] > div.element-container,
+    div[data-testid="column"] div.element-container {
+        min-height: 150px !important;
+        max-height: 150px !important;
+        height: 150px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: center !important;
+    }
+    /* Target any direct child divs of block containers */
+    div[data-testid="column"] > div > div > div[data-baseweb="block"] > div {
+        min-height: 150px !important;
+        max-height: 150px !important;
+        height: 150px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: center !important;
     }
     </style>
     """

@@ -91,7 +91,9 @@ else:
     st.session_state.text_key = None
 
 # Analyze Text Intent button - directly below text area
-if st.button("🔍 Analyze Text Intent", type="primary", use_container_width=True):
+# Disabled if no text input
+analyze_disabled = not st.session_state.input_text or not st.session_state.input_text.strip()
+if st.button("🔍 Analyze Text Intent", type="primary", use_container_width=True, disabled=analyze_disabled):
     if not st.session_state.input_text or not st.session_state.input_text.strip():
         st.warning("Please enter some text in the text area above before analyzing.")
     else:
@@ -185,6 +187,9 @@ if st.button("🔍 Analyze Text Intent", type="primary", use_container_width=Tru
                 add_log(f"Error during analysis: {str(e)}", "error")
                 st.error(f"Error during analysis: {str(e)}")
                 st.info("Please ensure OpenAI API key is configured correctly in `.streamlit/secrets.toml`")
+else:
+    if analyze_disabled:
+        st.caption("⚠️ Please enter text in the text area above before analyzing")
 
 st.markdown("---")
 
@@ -192,57 +197,66 @@ st.markdown("---")
 # 2. POLICY GENERATION WORKFLOW SECTION
 # ============================================================================
 
+# Determine current step for enabling/disabling buttons
+# Step 1: Input text (always enabled)
+# Step 2: Analyze text (enabled if text exists)
+# Step 3: View analysis (shown if analysis exists)
+# Step 4: Generate policy (enabled if analysis exists)
+# Step 5: Generated policy (shown if policy exists)
+
+# Show analysis results - always visible
+st.markdown("#### Text Analysis Results")
 if st.session_state.text_analysis:
-    # Show analysis results if available
-    st.markdown("#### Text Analysis Results")
-    with st.expander("View Analysis", expanded=True):
-        col_a1, col_a2 = st.columns(2)
-        
-        with col_a1:
-            st.markdown("**Intent:**")
-            st.info(st.session_state.text_analysis.get("intent", "N/A"))
-            
-            st.markdown("**Objectives:**")
-            objectives = st.session_state.text_analysis.get("objectives", [])
-            if objectives:
-                for obj in objectives:
-                    st.write(f"• {obj}")
-            else:
-                st.write("None specified")
-        
-        with col_a2:
-            st.markdown("**Policy Type:**")
-            st.write(st.session_state.text_analysis.get("policy_type", "other").replace("_", " ").title())
-            
-            st.markdown("**Risk Level:**")
-            risk_level = st.session_state.text_analysis.get("risk_level", "medium")
-            if risk_level == "critical":
-                st.error(risk_level.upper())
-            elif risk_level == "high":
-                st.warning(risk_level.upper())
-            else:
-                st.info(risk_level.upper())
-        
-        st.markdown("**Key Requirements:**")
-        requirements = st.session_state.text_analysis.get("key_requirements", [])
-        if requirements:
-            for req in requirements:
-                st.write(f"• {req}")
-        else:
-            st.write("None specified")
-        
-        st.markdown("**Compliance Frameworks:**")
-        frameworks = st.session_state.text_analysis.get("compliance_frameworks", [])
-        if frameworks:
-            st.write(", ".join(frameworks))
-        else:
-            st.write("None specified")
-        
-        st.markdown("**Summary:**")
-        st.write(st.session_state.text_analysis.get("summary", "N/A"))
+    col_a1, col_a2 = st.columns(2)
     
-    # Generate Policy button
-    if st.button("⚙️ Generate Policy", type="primary", use_container_width=True):
+    with col_a1:
+        st.markdown("**Intent:**")
+        st.info(st.session_state.text_analysis.get("intent", "N/A"))
+        
+        st.markdown("**Objectives:**")
+        objectives = st.session_state.text_analysis.get("objectives", [])
+        if objectives:
+            for obj in objectives:
+                st.write(f"• {obj}")
+        else:
+            st.write("None specified")
+    
+    with col_a2:
+        st.markdown("**Policy Type:**")
+        st.write(st.session_state.text_analysis.get("policy_type", "other").replace("_", " ").title())
+        
+        st.markdown("**Risk Level:**")
+        risk_level = st.session_state.text_analysis.get("risk_level", "medium")
+        if risk_level == "critical":
+            st.error(risk_level.upper())
+        elif risk_level == "high":
+            st.warning(risk_level.upper())
+        else:
+            st.info(risk_level.upper())
+    
+    st.markdown("**Key Requirements:**")
+    requirements = st.session_state.text_analysis.get("key_requirements", [])
+    if requirements:
+        for req in requirements:
+            st.write(f"• {req}")
+    else:
+        st.write("None specified")
+    
+    st.markdown("**Compliance Frameworks:**")
+    frameworks = st.session_state.text_analysis.get("compliance_frameworks", [])
+    if frameworks:
+        st.write(", ".join(frameworks))
+    else:
+        st.write("None specified")
+    
+    st.markdown("**Summary:**")
+    st.write(st.session_state.text_analysis.get("summary", "N/A"))
+else:
+    st.info("Analysis results will appear here after text analysis is completed.")
+
+# Generate Policy button - always visible, disabled if no analysis
+generate_disabled = not st.session_state.text_analysis
+if st.button("⚙️ Generate Policy", type="primary", use_container_width=True, disabled=generate_disabled):
         with st.spinner("Generating policy with LLM (this may take a minute)..."):
             try:
                 add_log("Starting policy generation from input text", "info")
@@ -305,79 +319,82 @@ if st.session_state.text_analysis:
                 add_log(f"Error during policy generation: {str(e)}", "error")
                 st.error(f"Error during policy generation: {str(e)}")
                 st.info("Please ensure OpenAI API key is configured correctly in `.streamlit/secrets.toml`")
+else:
+    if generate_disabled:
+        st.caption("⚠️ Text analysis must be completed before generating policy")
+
+# Show generated policy status - always visible
+st.markdown("#### Generated Policy")
+if st.session_state.generated_policy_path and os.path.exists(st.session_state.generated_policy_path):
+    policy_filename = os.path.basename(st.session_state.generated_policy_path)
     
-    # Show generated policy status
-    if st.session_state.generated_policy_path and os.path.exists(st.session_state.generated_policy_path):
-        st.markdown("#### Generated Policy")
-        policy_filename = os.path.basename(st.session_state.generated_policy_path)
-        
-        st.success(f"✅ Policy generated and saved: `{policy_filename}`")
-        st.info(f"📁 Saved to: `{st.session_state.generated_policy_path}`")
-        
-        col_open, col_view, col_download = st.columns(3)
-        
-        with col_open:
-            if st.button("📝 Open in Policy Editor", type="primary", use_container_width=True):
-                add_log(f"Opening policy '{policy_filename}' in policy editor", "info")
-                # Set the selected policy in session state
-                st.session_state.editor_selected_policy = policy_filename
-                # Add flag to indicate this is a newly generated policy
-                st.session_state.policy_just_generated = True
-                st.switch_page("pages/policy_editor.py")
-        
-        with col_view:
-            if st.button("👁️ Preview Policy", use_container_width=True):
-                try:
-                    with open(st.session_state.generated_policy_path, 'r', encoding='utf-8') as f:
-                        policy_data = json.load(f)
-                    st.json(policy_data)
-                except Exception as e:
-                    st.error(f"Failed to load policy: {str(e)}")
-        
-        with col_download:
+    st.success(f"✅ Policy generated and saved: `{policy_filename}`")
+    st.info(f"📁 Saved to: `{st.session_state.generated_policy_path}`")
+    
+    col_open, col_view, col_download = st.columns(3)
+    
+    with col_open:
+        if st.button("📝 Open in Policy Editor", type="primary", use_container_width=True):
+            add_log(f"Opening policy '{policy_filename}' in policy editor", "info")
+            # Set the selected policy in session state
+            st.session_state.editor_selected_policy = policy_filename
+            # Add flag to indicate this is a newly generated policy
+            st.session_state.policy_just_generated = True
+            st.switch_page("pages/policy_editor.py")
+    
+    with col_view:
+        if st.button("👁️ Preview Policy", use_container_width=True):
             try:
                 with open(st.session_state.generated_policy_path, 'r', encoding='utf-8') as f:
-                    policy_json_data = f.read()
-                
-                st.download_button(
-                    label="💾 Download JSON",
-                    data=policy_json_data,
-                    file_name=policy_filename,
-                    mime="application/json",
-                    use_container_width=True
-                )
+                    policy_data = json.load(f)
+                st.json(policy_data)
             except Exception as e:
-                st.error(f"Failed to prepare download: {str(e)}")
+                st.error(f"Failed to load policy: {str(e)}")
+    
+    with col_download:
+        try:
+            with open(st.session_state.generated_policy_path, 'r', encoding='utf-8') as f:
+                policy_json_data = f.read()
+            
+            st.download_button(
+                label="💾 Download JSON",
+                data=policy_json_data,
+                file_name=policy_filename,
+                mime="application/json",
+                use_container_width=True
+            )
+        except Exception as e:
+            st.error(f"Failed to prepare download: {str(e)}")
 else:
-    st.info("Please analyze text first using the '🔍 Analyze Text Intent' button above to begin policy generation.")
+    st.info("Generated policy will appear here after policy generation is completed.")
 
 st.markdown("---")
 
 # ============================================================================
 # DEBUG LOGGING SECTION (at bottom)
 # ============================================================================
-with st.expander("🔍 Debug Logging", expanded=False):
-    st.caption("View step-by-step operation logs for debugging")
-    
-    if st.button("Clear Logs", key="clear_logs"):
-        st.session_state.soft_ontology_logs = []
-        st.rerun()
-    
-    if st.session_state.soft_ontology_logs:
-        # Show logs in reverse order (newest first)
-        for log in reversed(st.session_state.soft_ontology_logs[-20:]):  # Show last 20
-            level = log.get("level", "info")
-            timestamp = log.get("timestamp", "")
-            message = log.get("message", "")
-            
-            if level == "success":
-                st.success(f"[{timestamp}] {message}")
-            elif level == "warning":
-                st.warning(f"[{timestamp}] {message}")
-            elif level == "error":
-                st.error(f"[{timestamp}] {message}")
-            else:
-                st.info(f"[{timestamp}] {message}")
-    else:
-        st.info("No logs yet. Operations will be logged here.")
+st.markdown("### 🔍 Debug Logging")
+st.caption("View step-by-step operation logs for debugging")
+
+if st.button("Clear Logs", key="clear_logs"):
+    st.session_state.soft_ontology_logs = []
+    st.rerun()
+
+if st.session_state.soft_ontology_logs:
+    # Show logs in reverse order (newest first)
+    for log in reversed(st.session_state.soft_ontology_logs[-20:]):  # Show last 20
+        level = log.get("level", "info")
+        timestamp = log.get("timestamp", "")
+        message = log.get("message", "")
+        
+        if level == "success":
+            st.success(f"[{timestamp}] {message}")
+        elif level == "warning":
+            st.warning(f"[{timestamp}] {message}")
+        elif level == "error":
+            st.error(f"[{timestamp}] {message}")
+        else:
+            st.info(f"[{timestamp}] {message}")
+else:
+    st.info("No logs yet. Operations will be logged here.")
 

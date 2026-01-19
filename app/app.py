@@ -538,7 +538,7 @@ with row1_col1:
     if current_trace and trace_dict:
         render_enforcement_pipeline_enhanced(trace_dict)
     else:
-        st.markdown("### Enforcement Pipeline (8-gate runtime sequence)")
+        st.markdown("### Enforcement Pipeline")
         st.caption("Temporal sequence: what happened step-by-step")
         st.info("Submit a request to see the enforcement pipeline flow.")
     
