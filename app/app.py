@@ -18,7 +18,7 @@ from constitutional_enforcement_interactive import ConstitutionalEnforcer, Decis
 
 # Import new components
 from trace_manager import TraceManager
-from pipeline_mapper import execute_pipeline
+from pipeline_mapper import execute_pipeline, PolicyContext
 from ui_components import (
     render_pipeline_flow,
     render_surface_activation,
@@ -144,19 +144,48 @@ def load_policy_summary():
     # Extract actual filename from display option
     selected_policy = selected_display.replace(" (Baseline)", "")
     
-    # Reload enforcer if policy changed
+    # Reload enforcer and policy context if policy changed
     if selected_policy != st.session_state.get("selected_policy"):
         st.session_state.selected_policy = selected_policy
         st.session_state.enforcer = load_policy_file(selected_policy)
+        # Create PolicyContext from loaded policy
+        if st.session_state.enforcer:
+            try:
+                policy_json = st.session_state.enforcer.policy
+                st.session_state.policy_context = PolicyContext.from_policy_json(policy_json)
+            except Exception as e:
+                st.sidebar.error(f"Failed to create policy context: {str(e)}")
+                st.session_state.policy_context = None
+        else:
+            st.session_state.policy_context = None
         # Reset Policy Diff radio to "Baseline Only" when policy changes
         if "policy_view_selector" in st.session_state:
             st.session_state.policy_view_selector = "Baseline Only"
         st.rerun()
     
-    # Initialize enforcer if not already loaded
+    # Initialize enforcer and policy context if not already loaded
     if "enforcer" not in st.session_state or st.session_state.enforcer is None:
         st.session_state.enforcer = load_policy_file(selected_policy)
         st.session_state.selected_policy = selected_policy
+        # Create PolicyContext from loaded policy
+        if st.session_state.enforcer:
+            try:
+                policy_json = st.session_state.enforcer.policy
+                st.session_state.policy_context = PolicyContext.from_policy_json(policy_json)
+            except Exception as e:
+                st.sidebar.error(f"Failed to create policy context: {str(e)}")
+                st.session_state.policy_context = None
+        else:
+            st.session_state.policy_context = None
+    
+    # Ensure policy_context exists if enforcer exists
+    if st.session_state.enforcer and "policy_context" not in st.session_state:
+        try:
+            policy_json = st.session_state.enforcer.policy
+            st.session_state.policy_context = PolicyContext.from_policy_json(policy_json)
+        except Exception as e:
+            st.sidebar.error(f"Failed to create policy context: {str(e)}")
+            st.session_state.policy_context = None
     
     # Initialize rule states from policy
     if st.session_state.enforcer:
@@ -291,14 +320,15 @@ def get_mock_state():
 
 def process_sandbox_request(user_prompt: str, user_id: str = "analyst_123"):
     """Process a request through the full pipeline"""
-    enforcer = st.session_state.enforcer
+    policy_context = st.session_state.get("policy_context")
     trace_manager = st.session_state.trace_manager
     
-    if not enforcer:
+    if not policy_context:
+        st.error("No policy selected. Please select a policy before submitting requests.")
         return None
     
-    # Execute pipeline
-    pipeline_results = execute_pipeline(user_prompt, user_id, enforcer)
+    # Execute pipeline with policy context
+    pipeline_results = execute_pipeline(user_prompt, user_id, policy_context)
     
     # Create trace - each request gets its own unique trace_id
     trace = trace_manager.create_trace(
@@ -358,45 +388,56 @@ st.markdown("---")
 # Submit Request section - only show in ENFORCE mode
 if not st.session_state.simulate_mode:
     st.markdown("### Submit Request")
-    if not st.session_state.enforcer:
-        st.error("Please load a policy file first. Policy file should be in the parent directory.")
-    else:
-        # Demo prompts dropdown
-        st.markdown("**Load Demo Prompt:**")
-        demo_prompts = {
-            "Select a demo prompt...": None,
-            "Low Risk: What's the weather?": "What's the weather?",
-            "PII Export: Export all customer records with emails and SSNs to CSV": "Export all customer records with emails and SSNs to CSV",
-            "Medium Risk: Create a Jira task for Q4 compliance review": "Create a Jira task for Q4 compliance review",
-            "High Risk Denial: Delete all records": "Delete all records"
-        }
-        
-        selected_demo = st.selectbox(
-            "Demo Prompts",
-            options=list(demo_prompts.keys()),
-            key="demo_prompt_selector",
-            label_visibility="collapsed"
-        )
-        
-        if selected_demo and demo_prompts[selected_demo]:
-            if st.button("Load Selected Prompt", type="primary", use_container_width=True):
-                st.session_state["user_prompt_input"] = demo_prompts[selected_demo]
-                st.rerun()
-        
-        # Initialize session state for user prompt if not exists
-        if "user_prompt_input" not in st.session_state:
-            st.session_state["user_prompt_input"] = ""
-        
-        user_input = st.text_area(
-            "User Prompt",
-            placeholder="e.g., Draft a Q4 compliance policy update under OCC supervision.",
-            height=100,
-            key="user_prompt_input"
-        )
-        
-        col1, col2 = st.columns([1, 4])
-        with col1:
-            submit_button = st.button("Submit Request", type="primary")
+    policy_context = st.session_state.get("policy_context")
+    
+    # Demo prompts dropdown - always visible
+    st.markdown("**Load Demo Prompt:**")
+    demo_prompts = {
+        "Select a demo prompt...": None,
+        "Low Risk: What's the weather?": "What's the weather?",
+        "PII Export: Export all customer records with emails and SSNs to CSV": "Export all customer records with emails and SSNs to CSV",
+        "Medium Risk: Create a Jira task for Q4 compliance review": "Create a Jira task for Q4 compliance review",
+        "High Risk Denial: Delete all records": "Delete all records"
+    }
+    
+    # Demo prompts dropdown - selection persists across policy changes via key
+    demo_options = list(demo_prompts.keys())
+    
+    # Streamlit automatically persists widget state when using a key
+    # The selection will be preserved across policy changes and reruns
+    selected_demo = st.selectbox(
+        "Demo Prompts",
+        options=demo_options,
+        index=0,  # Only used on first render when key doesn't exist
+        key="demo_prompt_selector",
+        label_visibility="collapsed"
+    )
+    
+    # Button is always visible, but disabled if no option selected
+    prompt_selected = selected_demo and demo_prompts[selected_demo]
+    if st.button("Load Selected Prompt", type="primary", use_container_width=True, disabled=not prompt_selected):
+        if prompt_selected:
+            st.session_state["user_prompt_input"] = demo_prompts[selected_demo]
+            st.rerun()
+    
+    if not policy_context:
+        st.error("⚠️ **No policy selected.** Please select a policy from the sidebar before submitting requests.")
+        st.info("Policy selection is required for all requests. No execution without policy.")
+    
+    # Initialize session state for user prompt if not exists
+    if "user_prompt_input" not in st.session_state:
+        st.session_state["user_prompt_input"] = ""
+    
+    user_input = st.text_area(
+        "User Prompt",
+        placeholder="e.g., Draft a Q4 compliance policy update under OCC supervision.",
+        height=100,
+        key="user_prompt_input"
+    )
+    
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        submit_button = st.button("Submit Request", type="primary", disabled=not policy_context)
         
         with col2:
             # Show highlighted success message next to button if submission was successful
@@ -490,7 +531,7 @@ else:
 st.markdown("---")
 
 # Main content area - row 1: Enforcement Pipeline + Surface Activation
-row1_col1, row1_col2 = st.columns([2, 1])
+row1_col1, row1_col2 = st.columns([3, 2])
 
 with row1_col1:
     # 1. Enforcement Pipeline (WHEN)

@@ -476,14 +476,25 @@ def render_enforcement_pipeline_enhanced(trace_data: Dict[str, Any]):
         {"num": 8, "name": "EXPORT", "desc": "Audit packet"}
     ]
     
-    # Fixed height for gate tiles (100px)
+    # Fixed height for gate tiles - ensure all cards are same height
     tile_style = """
     <style>
-    .gate-tile {
-        min-height: 100px;
-        max-height: 100px;
-        overflow: hidden;
-        text-overflow: ellipsis;
+    /* Target all block containers in columns (gate cards) */
+    div[data-testid="column"] > div > div > div[data-baseweb="block"] {
+        min-height: 140px !important;
+        max-height: 140px !important;
+        height: 140px !important;
+    }
+    /* Target the inner content divs to center content vertically */
+    div[data-testid="column"] > div > div > div[data-baseweb="block"] > div {
+        min-height: 140px !important;
+        max-height: 140px !important;
+        height: 140px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: center !important;
+        align-items: flex-start !important;
+        overflow: hidden !important;
     }
     </style>
     """
@@ -498,59 +509,57 @@ def render_enforcement_pipeline_enhanced(trace_data: Dict[str, Any]):
         gate_result = next((g for g in gate_results if g.get("gate_num") == gate_num), None)
         
         with row1_cols[i]:
-            # Use container with fixed height
-            with st.container():
-                if gate_result:
-                    status = gate_result.get("status", "unknown")
-                    verdict = gate_result.get("verdict", "")
-                    
-                    # Truncate long descriptions
-                    desc = info['desc'][:20] if len(info['desc']) > 20 else info['desc']
-                    
-                    # Single write call with three lines: Gate number/name, Description, Status
-                    if status == "passed" or verdict == "ALLOW":
-                        st.success(f"**{gate_num} {info['name']}**\n{desc}\n**PASS**")
-                    elif status == "escalated" or verdict == "ESCALATE":
-                        st.warning(f"**{gate_num} {info['name']}**\n{desc}\n**ESCALATE**")
-                    elif status == "failed" or verdict == "DENY":
-                        st.error(f"**{gate_num} {info['name']}**\n{desc}\n**DENY**")
-                    else:
-                        st.write(f"**{gate_num} {info['name']}**\n{desc}\n**PENDING**")
-                    
-                    # Show matched rules for Gate 4 (Policy Lookup)
-                    if gate_num == 4:
-                        matched_rules = gate_result.get("matched_rules", [])
-                        verdict_rule = gate_result.get("verdict_rule") or gate_result.get("signals", {}).get("verdict_rule")
-                        
-                        if matched_rules:
-                            with st.expander("View Matched Rules", expanded=False):
-                                for rule in matched_rules:
-                                    rule_id = rule.get("rule_id", "Unknown")
-                                    is_baseline = rule.get("baseline", False)
-                                    clause_ref = rule.get("policy_clause_ref", "")
-                                    description = rule.get("description", "")
-                                    
-                                    # Highlight the verdict rule
-                                    is_verdict_rule = verdict_rule and rule_id == verdict_rule.get("rule_id")
-                                    
-                                    # Display rule with badge
-                                    if is_baseline:
-                                        rule_text = f"**Matched Rule:** {rule_id} 🔒 **BASELINE**"
-                                    else:
-                                        rule_text = f"**Matched Rule:** {rule_id} ⚙️ **CUSTOM**"
-                                    
-                                    if is_verdict_rule:
-                                        rule_text = f"**→ {rule_text}** (Verdict Rule)"
-                                    
-                                    st.markdown(rule_text)
-                                    
-                                    if clause_ref:
-                                        st.caption(f"Clause: {clause_ref}")
-                                    if description:
-                                        st.caption(description)
+            if gate_result:
+                status = gate_result.get("status", "unknown")
+                verdict = gate_result.get("verdict", "")
+                
+                # Truncate long descriptions
+                desc = info['desc'][:20] if len(info['desc']) > 20 else info['desc']
+                
+                # Single write call with three lines: Gate number/name, Description, Status
+                if status == "passed" or verdict == "ALLOW":
+                    st.success(f"**{gate_num} {info['name']}**\n{desc}\n**PASS**")
+                elif status == "escalated" or verdict == "ESCALATE":
+                    st.warning(f"**{gate_num} {info['name']}**\n{desc}\n**ESCALATE**")
+                elif status == "failed" or verdict == "DENY":
+                    st.error(f"**{gate_num} {info['name']}**\n{desc}\n**DENY**")
                 else:
-                    desc = info['desc'][:20] if len(info['desc']) > 20 else info['desc']
                     st.write(f"**{gate_num} {info['name']}**\n{desc}\n**PENDING**")
+            else:
+                desc = info['desc'][:20] if len(info['desc']) > 20 else info['desc']
+                st.write(f"**{gate_num} {info['name']}**\n{desc}\n**PENDING**")
+                    
+            # Show matched rules for Gate 4 (Policy Lookup) - outside the fixed height container
+            if gate_result and gate_num == 4:
+                matched_rules = gate_result.get("matched_rules", [])
+                verdict_rule = gate_result.get("verdict_rule") or gate_result.get("signals", {}).get("verdict_rule")
+                
+                if matched_rules:
+                    with st.expander("View Matched Rules", expanded=False):
+                        for rule in matched_rules:
+                            rule_id = rule.get("rule_id", "Unknown")
+                            is_baseline = rule.get("baseline", False)
+                            clause_ref = rule.get("policy_clause_ref", "")
+                            description = rule.get("description", "")
+                            
+                            # Highlight the verdict rule
+                            is_verdict_rule = verdict_rule and rule_id == verdict_rule.get("rule_id")
+                            
+                            # Display rule with badge
+                            if is_baseline:
+                                rule_text = f"**Matched Rule:** {rule_id} 🔒 **BASELINE**"
+                            else:
+                                rule_text = f"**Matched Rule:** {rule_id} ⚙️ **CUSTOM**"
+                            
+                            if is_verdict_rule:
+                                rule_text = f"**→ {rule_text}** (Verdict Rule)"
+                            
+                            st.markdown(rule_text)
+                            
+                            if clause_ref:
+                                st.caption(f"Clause: {clause_ref}")
+                            if description:
+                                st.caption(description)
     
     # Row 2: Gates 5-8
     row2_cols = st.columns(4)
@@ -560,27 +569,25 @@ def render_enforcement_pipeline_enhanced(trace_data: Dict[str, Any]):
         gate_result = next((g for g in gate_results if g.get("gate_num") == gate_num), None)
         
         with row2_cols[i - 4]:
-            # Use container with fixed height
-            with st.container():
-                if gate_result:
-                    status = gate_result.get("status", "unknown")
-                    verdict = gate_result.get("verdict", "")
-                    
-                    # Truncate long descriptions
-                    desc = info['desc'][:20] if len(info['desc']) > 20 else info['desc']
-                    
-                    # Single write call with three lines: Gate number/name, Description, Status
-                    if status == "passed" or verdict == "ALLOW":
-                        st.success(f"**{gate_num} {info['name']}**\n{desc}\n**PASS**")
-                    elif status == "escalated" or verdict == "ESCALATE":
-                        st.warning(f"**{gate_num} {info['name']}**\n{desc}\n**ESCALATE**")
-                    elif status == "failed" or verdict == "DENY":
-                        st.error(f"**{gate_num} {info['name']}**\n{desc}\n**DENY**")
-                    else:
-                        st.write(f"**{gate_num} {info['name']}**\n{desc}\n**PENDING**")
+            if gate_result:
+                status = gate_result.get("status", "unknown")
+                verdict = gate_result.get("verdict", "")
+                
+                # Truncate long descriptions
+                desc = info['desc'][:20] if len(info['desc']) > 20 else info['desc']
+                
+                # Single write call with three lines: Gate number/name, Description, Status
+                if status == "passed" or verdict == "ALLOW":
+                    st.success(f"**{gate_num} {info['name']}**\n{desc}\n**PASS**")
+                elif status == "escalated" or verdict == "ESCALATE":
+                    st.warning(f"**{gate_num} {info['name']}**\n{desc}\n**ESCALATE**")
+                elif status == "failed" or verdict == "DENY":
+                    st.error(f"**{gate_num} {info['name']}**\n{desc}\n**DENY**")
                 else:
-                    desc = info['desc'][:20] if len(info['desc']) > 20 else info['desc']
                     st.write(f"**{gate_num} {info['name']}**\n{desc}\n**PENDING**")
+            else:
+                desc = info['desc'][:20] if len(info['desc']) > 20 else info['desc']
+                st.write(f"**{gate_num} {info['name']}**\n{desc}\n**PENDING**")
 
 
 def render_escalation_details(trace_data: Dict[str, Any], approval_data: Optional[Dict[str, Any]] = None):

@@ -9,6 +9,7 @@ import time
 import re
 import json
 from typing import Dict, Any, List, Optional
+from dataclasses import dataclass, field
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -21,6 +22,34 @@ try:
     HAS_STREAMLIT = True
 except ImportError:
     HAS_STREAMLIT = False
+
+
+@dataclass
+class PolicyContext:
+    """
+    Immutable policy context object that encapsulates all policy data.
+    Required for all pipeline execution - no execution without policy context.
+    """
+    policy_id: str
+    policy_version: str
+    baseline_parent_policy_id: Optional[str] = None
+    rules: List[Dict[str, Any]] = field(default_factory=list)
+    gates: Dict[str, Any] = field(default_factory=dict)
+    overlays: Dict[str, Any] = field(default_factory=dict)
+    policy_json: Dict[str, Any] = field(default_factory=dict)
+    
+    @classmethod
+    def from_policy_json(cls, policy_json: Dict[str, Any]) -> 'PolicyContext':
+        """Create PolicyContext from loaded policy JSON"""
+        return cls(
+            policy_id=policy_json.get("policy_id", "unknown"),
+            policy_version=policy_json.get("policy_version", "1.0.0"),
+            baseline_parent_policy_id=policy_json.get("baseline_parent_policy_id"),
+            rules=policy_json.get("rules", []),
+            gates=policy_json.get("gates", {}),
+            overlays=policy_json.get("overlays", {}),
+            policy_json=policy_json
+        )
 
 
 # Gate definitions
@@ -54,16 +83,15 @@ def classify_intent(user_input: str) -> str:
         return "general_query"
 
 
-def get_matched_rules(request: str, intent_category: str, data_class: str, tool_name: Optional[str], enforcer: ConstitutionalEnforcer) -> List[Dict[str, Any]]:
-    """Get matched rules based on request context"""
+def get_matched_rules(request: str, intent_category: str, data_class: str, tool_name: Optional[str], policy_context: PolicyContext) -> List[Dict[str, Any]]:
+    """Get matched rules based on request context from PolicyContext"""
     matched_rules = []
     
-    # Get rules from policy
-    policy = enforcer.policy
-    if "rules" not in policy:
+    # Get rules from policy context
+    if not policy_context or not policy_context.rules:
         return matched_rules
     
-    rules = policy["rules"]
+    rules = policy_context.rules
     
     # Get rule states (from session state if available, otherwise from policy)
     rule_states = {}
@@ -758,14 +786,48 @@ def _execute_delete_prompt(request: str, user_id: str, enforcer: ConstitutionalE
     }
 
 
-def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforcer) -> Dict[str, Any]:
+def execute_pipeline(request: str, user_id: str, policy_context: PolicyContext) -> Dict[str, Any]:
     """
     Execute the 8-gate pipeline for a request.
     Maps existing enforcement methods to pipeline stages.
     Returns trace data with gate results.
     All prompts (including demo prompts) flow through the normal pipeline
     to ensure policy-based enforcement is applied.
+    
+    Args:
+        request: User prompt/request
+        user_id: User identifier
+        policy_context: PolicyContext object (required - no execution without policy)
+    
+    Returns:
+        Dict with gate results, verdict, and policy enforcement evidence
     """
+    # Validate policy context is present
+    if policy_context is None:
+        raise ValueError("Policy context is required for pipeline execution. No execution without policy.")
+    
+    # Create enforcer from policy context
+    # We need to save policy to temp file or pass policy_json directly
+    # For now, create enforcer from policy_json by saving to temp file
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp_file:
+        json.dump(policy_context.policy_json, tmp_file)
+        tmp_path = tmp_file.name
+    
+    try:
+        enforcer = ConstitutionalEnforcer(tmp_path)
+    finally:
+        # Clean up temp file
+        import os
+        try:
+            os.unlink(tmp_path)
+        except:
+            pass
+    
+    # Log policy ID at execution start
+    if HAS_STREAMLIT:
+        st.write(f"🔒 Executing with policy: {policy_context.policy_id} (v{policy_context.policy_version})")
+    
     # All requests use normal pipeline execution to respect selected policy
     gate_results = []
     surfaces_touched = {
@@ -840,10 +902,16 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
             "final_verdict": final_verdict,
             "short_circuited": True,
             "baseline_policy_id": baseline_policy_id,
+            "policy_id": policy_context.policy_id,
+            "policy_version": policy_context.policy_version,
+            "baseline_parent_policy_id": policy_context.baseline_parent_policy_id,
             "posture_level": posture_level,
             "posture_rationale": posture_rationale,
             "risk_level": risk_level,
-            "risk_drivers": risk_drivers
+            "risk_drivers": risk_drivers,
+            "verdict_rule_id": None,
+            "verdict_rule_type": None,
+            "verdict_rationale": "Pipeline short-circuited before policy rule evaluation"
         }
     
     # Gate 2: Intent Classification
@@ -883,15 +951,15 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
     gate3_result = {
         "gate_num": 3,
         "gate_name": "Data Classification",
-        "status": "passed" if dlp_result else "failed",
-        "verdict": "ALLOW" if dlp_result else "DENY",
+        "status": "passed",  # Gate 3 classifies data but doesn't make final decision
+        "verdict": "ALLOW",  # Always allow to continue to policy evaluation
         "signals": {
             "has_pii": has_pii,
             "dlp_scan_passed": dlp_result,
             "data_classification": data_class
         },
         "policies": [],
-        "decision_reason": None if dlp_result else "DLP scan detected sensitive data",
+        "decision_reason": None if dlp_result else "DLP scan detected sensitive data - will be evaluated by policy",
         "processing_time_ms": processing_time
     }
     gate_results.append(gate3_result)
@@ -901,9 +969,8 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
     posture_level = None
     posture_rationale = []
     
-    if not dlp_result:
-        short_circuited = True
-        final_verdict = "DENY"
+    # Don't short-circuit at Gate 3 - let policy evaluation (Gate 5/6) make the decision
+    # Gate 3 only classifies data; the policy's S-O gate will determine ALLOW/ESCALATE/DENY
     
     if short_circuited:
         for i in range(4, 9):
@@ -918,7 +985,7 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
                 "processing_time_ms": 0
             })
         # Compute posture and risk for short-circuited at Gate 3
-        baseline_policy_id = enforcer.policy.get("policy_id", "unknown")
+        baseline_policy_id = policy_context.policy_id
         # We have intent from Gate 2, but data classification failed
         gate2_result = next((g for g in gate_results if g.get("gate_num") == 2), None)
         intent_category = gate2_result.get("signals", {}).get("intent_category", "unknown") if gate2_result else "unknown"
@@ -944,10 +1011,16 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
             "final_verdict": final_verdict,
             "short_circuited": True,
             "baseline_policy_id": baseline_policy_id,
+            "policy_id": policy_context.policy_id,
+            "policy_version": policy_context.policy_version,
+            "baseline_parent_policy_id": policy_context.baseline_parent_policy_id,
             "posture_level": posture_level,
             "posture_rationale": posture_rationale,
             "risk_level": risk_level,
-            "risk_drivers": risk_drivers
+            "risk_drivers": risk_drivers,
+            "verdict_rule_id": None,
+            "verdict_rule_type": None,
+            "verdict_rationale": "Pipeline short-circuited before policy rule evaluation"
         }
     
     # Gate 4: Policy Lookup
@@ -959,12 +1032,17 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
     if data_class == "regulated":
         applicable_policies.append("EU_AIACT_HR_v0")
     
-    # Get policy gates that apply
-    policy_gates = list(enforcer.policy.get("gates", {}).keys())
+    # Get policy gates that apply from policy context
+    policy_gates = list(policy_context.gates.keys())
     
-    # Get matched rules
+    # Get matched rules from policy context
     tool_name, _ = infer_tool_and_params(request, intent_category)
-    matched_rules = get_matched_rules(request, intent_category, data_class, tool_name, enforcer)
+    matched_rules = get_matched_rules(request, intent_category, data_class, tool_name, policy_context)
+    
+    # Extract matched rule IDs and categorize by baseline/custom
+    matched_rule_ids = [r.get("rule_id") for r in matched_rules if r.get("rule_id")]
+    baseline_rules = [r.get("rule_id") for r in matched_rules if r.get("baseline", False) and r.get("rule_id")]
+    custom_rules = [r.get("rule_id") for r in matched_rules if not r.get("baseline", False) and r.get("rule_id")]
     
     # Compute posture level now that we have tool_name
     posture_level, posture_rationale = compute_posture_level(
@@ -1017,6 +1095,9 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
         "decision_reason": decision_reason,
         "processing_time_ms": processing_time,
         "matched_rules": matched_rules,
+        "matched_rule_ids": matched_rule_ids,
+        "baseline_rules": baseline_rules,
+        "custom_rules": custom_rules,
         "verdict_rule": verdict_rule
     }
     gate_results.append(gate4_result)
@@ -1030,6 +1111,11 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
     tool_decision = None
     requires_approval = False
     approval_required = False
+    
+    # Initialize verdict rule variables (used in both tool and no-tool paths)
+    verdict_rule_id = None
+    verdict_rule_type = None
+    verdict_rationale = None
     
     if tool_name:
         # Gate 5: Permission Check - Actually call pre_tool_call enforcement
@@ -1057,23 +1143,57 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
         }
         gate_results.append(gate5_result)
         
-        # Gate 6: Action Approval - Use the enforcement decision
+        # Gate 6: Action Approval - Derive verdict from policy rules
         start_time_gate6 = time.time()
         
-        if enforcement_result.decision == Decision.DENY:
+        # Aggregate all matched rules from Gate 4 and their severities
+        # Verdict selection logic: deny > escalate > allow
+        verdict_rule_id = None
+        verdict_rule_type = None
+        verdict_rationale = None
+        
+        # Check for deny rules first
+        deny_rules = [r for r in matched_rules if r.get("severity") == "deny"]
+        if deny_rules:
+            verdict_rule = deny_rules[0]  # Use first deny rule
             verdict = "DENY"
             status = "failed"
             final_verdict = "DENY"
+            verdict_rule_id = verdict_rule.get("rule_id", "Unknown")
+            verdict_rule_type = "BASELINE" if verdict_rule.get("baseline", False) else "CUSTOM"
+            verdict_rationale = f"Verdict derived from rule {verdict_rule_id} ({verdict_rule_type}) - severity: deny"
+        # Check for escalate rules
         elif enforcement_result.decision == Decision.REQUIRE_APPROVAL:
+            # Find escalate rule that caused this
+            escalate_rules = [r for r in matched_rules if r.get("severity") == "escalate"]
+            if escalate_rules:
+                verdict_rule = escalate_rules[0]
+                verdict_rule_id = verdict_rule.get("rule_id", "Unknown")
+                verdict_rule_type = "BASELINE" if verdict_rule.get("baseline", False) else "CUSTOM"
+            else:
+                # Fallback to verdict rule from Gate 4
+                if verdict_rule:
+                    verdict_rule_id = verdict_rule.get("rule_id", "Unknown")
+                    verdict_rule_type = "BASELINE" if verdict_rule.get("baseline", False) else "CUSTOM"
+            
             verdict = "ESCALATE"
             status = "escalated"
             final_verdict = "ESCALATE"
             requires_approval = True
             approval_required = True
+            verdict_rationale = f"Verdict derived from rule {verdict_rule_id} ({verdict_rule_type}) - severity: escalate" if verdict_rule_id else "Human approval required"
+        # Default to ALLOW
         else:
             verdict = "ALLOW"
             status = "passed"
             final_verdict = "ALLOW"
+            # Use verdict rule from Gate 4 if available
+            if verdict_rule:
+                verdict_rule_id = verdict_rule.get("rule_id", "Unknown")
+                verdict_rule_type = "BASELINE" if verdict_rule.get("baseline", False) else "CUSTOM"
+                verdict_rationale = f"Verdict derived from rule {verdict_rule_id} ({verdict_rule_type}) - severity: allow"
+            else:
+                verdict_rationale = "No matching rules - default ALLOW"
         
         processing_time_gate6 = (time.time() - start_time_gate6) * 1000
         
@@ -1086,11 +1206,16 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
                 "tool": tool_name,
                 "requires_approval": requires_approval,
                 "decision": enforcement_result.decision.value if hasattr(enforcement_result.decision, 'value') else str(enforcement_result.decision),
-                "controls_applied": enforcement_result.controls_applied
+                "controls_applied": enforcement_result.controls_applied,
+                "verdict_rule_id": verdict_rule_id,
+                "verdict_rule_type": verdict_rule_type
             },
             "policies": applicable_policies,
-            "decision_reason": enforcement_result.denial_reason if enforcement_result.decision == Decision.DENY else ("Human approval required" if requires_approval else None),
-            "processing_time_ms": processing_time_gate6
+            "decision_reason": verdict_rationale,
+            "processing_time_ms": processing_time_gate6,
+            "matched_rule_ids": matched_rule_ids,
+            "baseline_rules": baseline_rules,
+            "custom_rules": custom_rules
         }
         gate_results.append(gate6_result)
     else:
@@ -1116,6 +1241,10 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
         verdict = "ALLOW"
         status = "passed"
         final_verdict = "ALLOW"
+        # For no-tool case, set default verdict rationale
+        verdict_rule_id = None
+        verdict_rule_type = None
+        verdict_rationale = "No tool call - informational query allowed"
         processing_time_gate6 = (time.time() - start_time_gate6) * 1000
         
         gate6_result = {
@@ -1124,11 +1253,16 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
             "status": status,
             "verdict": verdict,
             "signals": {
-                "note": "No tool call - informational query allowed"
+                "note": "No tool call - informational query allowed",
+                "verdict_rule_id": verdict_rule_id,
+                "verdict_rule_type": verdict_rule_type
             },
             "policies": applicable_policies,
-            "decision_reason": None,
-            "processing_time_ms": processing_time_gate6
+            "decision_reason": verdict_rationale,
+            "processing_time_ms": processing_time_gate6,
+            "matched_rule_ids": matched_rule_ids if 'matched_rule_ids' in locals() else [],
+            "baseline_rules": baseline_rules if 'baseline_rules' in locals() else [],
+            "custom_rules": custom_rules if 'custom_rules' in locals() else []
         }
         gate_results.append(gate6_result)
     
@@ -1149,9 +1283,14 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
     gate4_result = next((g for g in gate_results if g.get("gate_num") == 4), None)
     matched_rules = gate4_result.get("matched_rules", []) if gate4_result else []
     
-    # Get policy version/hash
-    policy_version = enforcer.policy.get("policy_version", "1.0.0")
-    policy_id = enforcer.policy.get("policy_id", "unknown")
+    # Get matched rule IDs from Gate 4 (may not exist if no tool was inferred)
+    matched_rule_ids = gate4_result.get("matched_rule_ids", []) if gate4_result else []
+    baseline_rules = gate4_result.get("baseline_rules", []) if gate4_result else []
+    custom_rules = gate4_result.get("custom_rules", []) if gate4_result else []
+    
+    # Get policy version/hash from policy context
+    policy_version = policy_context.policy_version
+    policy_id = policy_context.policy_id
     
     # Evidence is captured through the audit log
     evidence_captured = {
@@ -1159,16 +1298,23 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
         "user_id": user_id,
         "intent": intent_category,
         "data_class": data_class,
-        "verdict": verdict,
+        "verdict": final_verdict,
         "surfaces_activated": [k for k, v in surfaces_touched.items() if v],
         "policy_version": policy_version,
         "policy_id": policy_id,
+        "baseline_parent_policy_id": policy_context.baseline_parent_policy_id,
         "matched_rules": matched_rules,
+        "matched_rule_ids": matched_rule_ids,
+        "baseline_rules": baseline_rules,
+        "custom_rules": custom_rules,
+        "verdict_rule_id": verdict_rule_id,
+        "verdict_rule_type": verdict_rule_type,
+        "verdict_rationale": verdict_rationale,
         "rule_states_at_decision": [
             {
                 "rule_id": rule["rule_id"],
-                "baseline": rule["baseline"],
-                "enabled": rule["enabled"]
+                "baseline": rule.get("baseline", False),
+                "enabled": rule.get("enabled", True)
             }
             for rule in matched_rules
         ]
@@ -1216,8 +1362,8 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
     if final_verdict == "ALLOW" or requires_approval:
         surfaces_touched["U-O"] = True
     
-    # Get baseline policy ID
-    baseline_policy_id = enforcer.policy.get("policy_id", "unknown")
+    # Get policy information from policy context
+    baseline_policy_id = policy_context.policy_id
     
     return {
         "gate_results": gate_results,
@@ -1227,10 +1373,16 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
         "short_circuited": False,
         "approval_required": approval_required,
         "baseline_policy_id": baseline_policy_id,
+        "policy_id": policy_context.policy_id,
+        "policy_version": policy_context.policy_version,
+        "baseline_parent_policy_id": policy_context.baseline_parent_policy_id,
         "posture_level": posture_level,
         "posture_rationale": posture_rationale,
         "risk_level": risk_level,
         "risk_drivers": risk_drivers,
+        "verdict_rule_id": verdict_rule_id,
+        "verdict_rule_type": verdict_rule_type,
+        "verdict_rationale": verdict_rationale,
         "tool_enforcement_result": {
             "tool": tool_name,
             "params": tool_params,

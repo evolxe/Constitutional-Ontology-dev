@@ -23,10 +23,17 @@ class TraceData:
     verdict: str = None
     resolution: Optional[str] = None
     baseline_policy_id: Optional[str] = None
+    policy_id: Optional[str] = None
+    policy_version: Optional[str] = None
+    baseline_parent_policy_id: Optional[str] = None
     posture_level: Optional[str] = None  # "L1", "L2", or "L3"
     posture_rationale: List[str] = field(default_factory=list)
     risk_level: Optional[str] = None  # "low", "medium", or "high"
     risk_drivers: List[str] = field(default_factory=list)
+    verdict_rule_id: Optional[str] = None
+    verdict_rule_type: Optional[str] = None  # "BASELINE" or "CUSTOM"
+    verdict_rationale: Optional[str] = None
+    gate_evaluations: List[Dict[str, Any]] = field(default_factory=list)  # Per-gate: evaluated rules, decisions
 
 
 class TraceManager:
@@ -47,8 +54,24 @@ class TraceManager:
         pipeline_results: Dict[str, Any],
         surface_activations: Dict[str, Any] = None
     ) -> TraceData:
-        """Create a new trace and store it"""
+        """Create a new trace and store it with policy enforcement evidence"""
         trace_id = self.generate_trace_id()
+        
+        # Extract gate evaluations from pipeline results
+        gate_evaluations = []
+        gate_results = pipeline_results.get("gate_results", [])
+        for gate_result in gate_results:
+            gate_eval = {
+                "gate_num": gate_result.get("gate_num"),
+                "gate_name": gate_result.get("gate_name"),
+                "matched_rule_ids": gate_result.get("matched_rule_ids", []),
+                "baseline_rules": gate_result.get("baseline_rules", []),
+                "custom_rules": gate_result.get("custom_rules", []),
+                "decision": gate_result.get("verdict"),
+                "decision_reason": gate_result.get("decision_reason")
+            }
+            gate_evaluations.append(gate_eval)
+        
         trace = TraceData(
             trace_id=trace_id,
             timestamp=datetime.utcnow().isoformat() + "Z",
@@ -58,10 +81,17 @@ class TraceManager:
             verdict=pipeline_results.get("final_verdict"),
             resolution=None,
             baseline_policy_id=pipeline_results.get("baseline_policy_id"),
+            policy_id=pipeline_results.get("policy_id"),
+            policy_version=pipeline_results.get("policy_version"),
+            baseline_parent_policy_id=pipeline_results.get("baseline_parent_policy_id"),
             posture_level=pipeline_results.get("posture_level"),
             posture_rationale=pipeline_results.get("posture_rationale", []),
             risk_level=pipeline_results.get("risk_level"),
-            risk_drivers=pipeline_results.get("risk_drivers", [])
+            risk_drivers=pipeline_results.get("risk_drivers", []),
+            verdict_rule_id=pipeline_results.get("verdict_rule_id"),
+            verdict_rule_type=pipeline_results.get("verdict_rule_type"),
+            verdict_rationale=pipeline_results.get("verdict_rationale"),
+            gate_evaluations=gate_evaluations
         )
         self.traces[trace_id] = trace
         return trace
@@ -109,9 +139,16 @@ class TraceManager:
             "verdict": trace.verdict,
             "resolution": trace.resolution,
             "baseline_policy_id": trace.baseline_policy_id,
+            "policy_id": trace.policy_id,
+            "policy_version": trace.policy_version,
+            "baseline_parent_policy_id": trace.baseline_parent_policy_id,
             "posture_level": trace.posture_level,
             "posture_rationale": trace.posture_rationale,
             "risk_level": trace.risk_level,
-            "risk_drivers": trace.risk_drivers
+            "risk_drivers": trace.risk_drivers,
+            "verdict_rule_id": trace.verdict_rule_id,
+            "verdict_rule_type": trace.verdict_rule_type,
+            "verdict_rationale": trace.verdict_rationale,
+            "gate_evaluations": trace.gate_evaluations
         }
 
