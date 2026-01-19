@@ -197,6 +197,80 @@ def infer_tool_and_params(user_input: str, intent_category: str) -> tuple:
     return None, {}
 
 
+def compute_posture_level(
+    gate2_intent: str,
+    gate3_data_class: str,
+    gate3_has_pii: bool,
+    tool_name: Optional[str]
+) -> tuple:
+    """
+    Compute posture level (L1/L2/L3) from pipeline signals.
+    Returns (posture_level, rationale_list)
+    """
+    rationale = []
+    
+    # L3: Highest risk - PII/PHI/regulated data detected
+    if gate3_has_pii or gate3_data_class == "regulated":
+        rationale.append("PII/PHI detected" if gate3_has_pii else "Regulated data detected")
+        return "L3", rationale
+    
+    # L2: Medium risk - write/externalize actions or medium/high intent risk
+    intent_risk_medium = gate2_intent in ["content_modification", "task_management", "information_retrieval"]
+    tool_risk_medium = tool_name and any(keyword in tool_name.lower() for keyword in ["write", "export", "execute", "create"])
+    
+    if intent_risk_medium or tool_risk_medium:
+        if intent_risk_medium:
+            rationale.append(f"Intent risk: {gate2_intent}")
+        if tool_risk_medium:
+            rationale.append(f"Tool risk: {tool_name}")
+        return "L2", rationale
+    
+    # L1: Low risk - default
+    rationale.append("No elevated risk signals detected")
+    return "L1", rationale
+
+
+def compute_risk_level(
+    gate2_intent: str,
+    gate3_data_class: str,
+    gate3_has_pii: bool,
+    gate3_dlp_scan_passed: bool,
+    tool_name: Optional[str],
+    gate5_verdict: str
+) -> tuple:
+    """
+    Compute risk level (low/medium/high) from gate outputs.
+    Returns (risk_level, risk_drivers_list)
+    """
+    drivers = []
+    
+    # High risk: PII detected + export/write action
+    if gate3_has_pii and tool_name and "export" in tool_name.lower():
+        drivers.append("PII detected")
+        drivers.append(f"Intent: {gate2_intent}")
+        drivers.append(f"Tool: {tool_name}")
+        return "high", drivers
+    
+    # High risk: Regulated data + external action
+    if gate3_data_class == "regulated" and tool_name:
+        drivers.append("Regulated data detected")
+        drivers.append(f"Tool: {tool_name}")
+        return "high", drivers
+    
+    # Medium risk: Write/execute actions without PII
+    if tool_name and any(kw in tool_name.lower() for kw in ["write", "execute", "create"]):
+        drivers.append(f"Tool: {tool_name}")
+        if gate2_intent != "general_query":
+            drivers.append(f"Intent: {gate2_intent}")
+        return "medium", drivers
+    
+    # Low risk: Read-only or informational queries
+    drivers.append(f"Intent: {gate2_intent}")
+    if not tool_name:
+        drivers.append("No tool call")
+    return "low", drivers
+
+
 def _execute_weather_prompt(request: str, user_id: str, enforcer: ConstitutionalEnforcer) -> Dict[str, Any]:
     """Execute pipeline for 'What's the weather?' - No tool inferred → ALLOW"""
     import time
@@ -276,16 +350,38 @@ def _execute_weather_prompt(request: str, user_id: str, enforcer: Constitutional
         "decision_reason": None, "processing_time_ms": processing_time
     })
     
+    # Compute posture and risk for weather prompt
+    posture_level, posture_rationale = compute_posture_level(
+        gate2_intent="general_query",
+        gate3_data_class="unregulated",
+        gate3_has_pii=False,
+        tool_name=None
+    )
+    risk_level, risk_drivers = compute_risk_level(
+        gate2_intent="general_query",
+        gate3_data_class="unregulated",
+        gate3_has_pii=False,
+        gate3_dlp_scan_passed=True,
+        tool_name=None,
+        gate5_verdict="ALLOW"
+    )
+    baseline_policy_id = enforcer.policy.get("policy_id", "unknown")
+    
     return {
         "gate_results": gate_results,
         "surface_activations": surfaces_touched,
         "final_verdict": "ALLOW",
-        "short_circuited": False
+        "short_circuited": False,
+        "baseline_policy_id": baseline_policy_id,
+        "posture_level": posture_level,
+        "posture_rationale": posture_rationale,
+        "risk_level": risk_level,
+        "risk_drivers": risk_drivers
     }
 
 
 def _execute_export_pii_prompt(request: str, user_id: str, enforcer: ConstitutionalEnforcer) -> Dict[str, Any]:
-    """Execute pipeline for 'Export customer PII' - export_data tool → PII detected → ESCALATE (if R-145 enabled)"""
+    """Execute pipeline for 'Export customer PII' or 'Export all customer records with emails and SSNs to CSV' - export_data tool → PII detected → ESCALATE (if R-145 enabled)"""
     import time
     gate_results = []
     surfaces_touched = {"U-I": True, "U-O": False, "S-I": False, "S-O": True, "M-I": False, "M-O": False, "A-I": False, "A-O": False}
@@ -317,10 +413,11 @@ def _execute_export_pii_prompt(request: str, user_id: str, enforcer: Constitutio
     
     # Gate 2: Intent Classification - PASS
     start_time = time.time()
+    intent_category = classify_intent(request)
     processing_time = (time.time() - start_time) * 1000
     gate_results.append({
         "gate_num": 2, "gate_name": "Intent Classification", "status": "passed", "verdict": "ALLOW",
-        "signals": {"intent_category": "information_retrieval"}, "policies": [],
+        "signals": {"intent_category": intent_category}, "policies": [],
         "decision_reason": None, "processing_time_ms": processing_time
     })
     
@@ -328,9 +425,13 @@ def _execute_export_pii_prompt(request: str, user_id: str, enforcer: Constitutio
     start_time = time.time()
     processing_time = (time.time() - start_time) * 1000
     
+    # Check for PII keywords in request (emails, SSNs, etc.)
+    pii_keywords = ["ssn", "ssns", "email", "emails", "pii", "phi", "customer"]
+    has_pii_keywords = any(keyword in request.lower() for keyword in pii_keywords)
+    
     # If R-145 is enabled, classify as regulated (PII detected)
     # If R-145 is disabled, classify as unregulated (no PII detection)
-    if rule_r145_enabled:
+    if rule_r145_enabled or has_pii_keywords:
         has_pii = True
         dlp_scan_passed = False
         data_classification = "regulated"
@@ -497,11 +598,33 @@ def _execute_export_pii_prompt(request: str, user_id: str, enforcer: Constitutio
         "decision_reason": None, "processing_time_ms": processing_time
     })
     
+    # Compute posture and risk for export PII prompt
+    posture_level, posture_rationale = compute_posture_level(
+        gate2_intent=intent_category,
+        gate3_data_class=data_classification,
+        gate3_has_pii=has_pii,
+        tool_name=tool_name
+    )
+    risk_level, risk_drivers = compute_risk_level(
+        gate2_intent=intent_category,
+        gate3_data_class=data_classification,
+        gate3_has_pii=has_pii,
+        gate3_dlp_scan_passed=dlp_scan_passed,
+        tool_name=tool_name,
+        gate5_verdict=gate5_verdict
+    )
+    baseline_policy_id = enforcer.policy.get("policy_id", "unknown")
+    
     return {
         "gate_results": gate_results,
         "surface_activations": surfaces_touched,
         "final_verdict": final_verdict,
         "short_circuited": False,
+        "baseline_policy_id": baseline_policy_id,
+        "posture_level": posture_level,
+        "posture_rationale": posture_rationale,
+        "risk_level": risk_level,
+        "risk_drivers": risk_drivers,
         "tool_enforcement_result": {
             "tool": tool_name,
             "params": tool_params,
@@ -605,11 +728,33 @@ def _execute_delete_prompt(request: str, user_id: str, enforcer: ConstitutionalE
         "decision_reason": None, "processing_time_ms": processing_time
     })
     
+    # Compute posture and risk for delete prompt
+    posture_level, posture_rationale = compute_posture_level(
+        gate2_intent="content_modification",
+        gate3_data_class="unregulated",
+        gate3_has_pii=False,
+        tool_name=tool_name
+    )
+    risk_level, risk_drivers = compute_risk_level(
+        gate2_intent="content_modification",
+        gate3_data_class="unregulated",
+        gate3_has_pii=False,
+        gate3_dlp_scan_passed=True,
+        tool_name=tool_name,
+        gate5_verdict="DENY"
+    )
+    baseline_policy_id = enforcer.policy.get("policy_id", "unknown")
+    
     return {
         "gate_results": gate_results,
         "surface_activations": surfaces_touched,
         "final_verdict": "DENY",
-        "short_circuited": False
+        "short_circuited": False,
+        "baseline_policy_id": baseline_policy_id,
+        "posture_level": posture_level,
+        "posture_rationale": posture_rationale,
+        "risk_level": risk_level,
+        "risk_drivers": risk_drivers
     }
 
 
@@ -618,23 +763,10 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
     Execute the 8-gate pipeline for a request.
     Maps existing enforcement methods to pipeline stages.
     Returns trace data with gate results.
+    All prompts (including demo prompts) flow through the normal pipeline
+    to ensure policy-based enforcement is applied.
     """
-    # Pattern match for specific demo prompts
-    request_stripped = request.strip()
-    
-    # Demo prompt 1: "What's the weather?" → ALLOW (no tool)
-    if request_stripped == "What's the weather?":
-        return _execute_weather_prompt(request, user_id, enforcer)
-    
-    # Demo prompt 2: "Export customer PII" → ESCALATE (export_data tool, PII detected, requires approval)
-    if request_stripped == "Export customer PII":
-        return _execute_export_pii_prompt(request, user_id, enforcer)
-    
-    # Demo prompt 3: "Delete all records" → DENY (delete_all_records tool in deny list)
-    if request_stripped == "Delete all records":
-        return _execute_delete_prompt(request, user_id, enforcer)
-    
-    # For all other requests, use normal pipeline execution
+    # All requests use normal pipeline execution to respect selected policy
     gate_results = []
     surfaces_touched = {
         "U-I": False, "U-O": False,
@@ -684,11 +816,34 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
                 "decision_reason": "Pipeline short-circuited at Gate 1",
                 "processing_time_ms": 0
             })
+        # Compute posture and risk even for short-circuited paths
+        baseline_policy_id = enforcer.policy.get("policy_id", "unknown")
+        # For short-circuited at Gate 1, we have minimal info - default to L1
+        posture_level, posture_rationale = compute_posture_level(
+            gate2_intent="unknown",
+            gate3_data_class="unknown",
+            gate3_has_pii=False,
+            tool_name=None
+        )
+        risk_level, risk_drivers = compute_risk_level(
+            gate2_intent="unknown",
+            gate3_data_class="unknown",
+            gate3_has_pii=False,
+            gate3_dlp_scan_passed=True,
+            tool_name=None,
+            gate5_verdict="DENY"
+        )
+        
         return {
             "gate_results": gate_results,
             "surface_activations": surfaces_touched,
             "final_verdict": final_verdict,
-            "short_circuited": True
+            "short_circuited": True,
+            "baseline_policy_id": baseline_policy_id,
+            "posture_level": posture_level,
+            "posture_rationale": posture_rationale,
+            "risk_level": risk_level,
+            "risk_drivers": risk_drivers
         }
     
     # Gate 2: Intent Classification
@@ -713,8 +868,8 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
     has_pii = enforcer._is_regulated_data(request)
     dlp_result = enforcer._dlp_scan(request)
     
-    # Check for PII keywords in request (for demo scenarios like "Export customer PII")
-    pii_keywords = ["pii", "phi", "customer", "ssn", "social security", "credit card", "account number"]
+    # Check for PII keywords in request (for demo scenarios like "Export customer PII" or "Export all customer records with emails and SSNs")
+    pii_keywords = ["pii", "phi", "customer", "ssn", "ssns", "social security", "credit card", "account number", "email", "emails"]
     has_pii_keywords = any(keyword in request.lower() for keyword in pii_keywords)
     if has_pii_keywords:
         has_pii = True
@@ -741,6 +896,11 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
     }
     gate_results.append(gate3_result)
     
+    # Compute posture level after Gate 3 (we have intent, data_class, has_pii)
+    # Tool name will be inferred in Gate 4, so we'll recompute posture after Gate 4
+    posture_level = None
+    posture_rationale = []
+    
     if not dlp_result:
         short_circuited = True
         final_verdict = "DENY"
@@ -757,11 +917,37 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
                 "decision_reason": "Pipeline short-circuited at Gate 3",
                 "processing_time_ms": 0
             })
+        # Compute posture and risk for short-circuited at Gate 3
+        baseline_policy_id = enforcer.policy.get("policy_id", "unknown")
+        # We have intent from Gate 2, but data classification failed
+        gate2_result = next((g for g in gate_results if g.get("gate_num") == 2), None)
+        intent_category = gate2_result.get("signals", {}).get("intent_category", "unknown") if gate2_result else "unknown"
+        
+        posture_level, posture_rationale = compute_posture_level(
+            gate2_intent=intent_category,
+            gate3_data_class="regulated",  # DLP failed, so regulated
+            gate3_has_pii=True,  # DLP failed implies PII
+            tool_name=None
+        )
+        risk_level, risk_drivers = compute_risk_level(
+            gate2_intent=intent_category,
+            gate3_data_class="regulated",
+            gate3_has_pii=True,
+            gate3_dlp_scan_passed=False,
+            tool_name=None,
+            gate5_verdict="DENY"
+        )
+        
         return {
             "gate_results": gate_results,
             "surface_activations": surfaces_touched,
             "final_verdict": final_verdict,
-            "short_circuited": True
+            "short_circuited": True,
+            "baseline_policy_id": baseline_policy_id,
+            "posture_level": posture_level,
+            "posture_rationale": posture_rationale,
+            "risk_level": risk_level,
+            "risk_drivers": risk_drivers
         }
     
     # Gate 4: Policy Lookup
@@ -779,6 +965,14 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
     # Get matched rules
     tool_name, _ = infer_tool_and_params(request, intent_category)
     matched_rules = get_matched_rules(request, intent_category, data_class, tool_name, enforcer)
+    
+    # Compute posture level now that we have tool_name
+    posture_level, posture_rationale = compute_posture_level(
+        gate2_intent=intent_category,
+        gate3_data_class=data_class,
+        gate3_has_pii=has_pii,
+        tool_name=tool_name
+    )
     
     # Determine which rule derived the verdict
     verdict_rule = None
@@ -938,6 +1132,17 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
         }
         gate_results.append(gate6_result)
     
+    # Compute risk level after Gate 5/6 (we have gate5_verdict from enforcement_result or "ALLOW" if no tool)
+    gate5_verdict_str = gate5_result.get("verdict", "ALLOW") if tool_name else "ALLOW"
+    risk_level, risk_drivers = compute_risk_level(
+        gate2_intent=intent_category,
+        gate3_data_class=data_class,
+        gate3_has_pii=has_pii,
+        gate3_dlp_scan_passed=dlp_result,
+        tool_name=tool_name,
+        gate5_verdict=gate5_verdict_str
+    )
+    
     # Gate 7: Evidence Capture
     start_time = time.time()
     # Get matched rules from Gate 4
@@ -1011,6 +1216,9 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
     if final_verdict == "ALLOW" or requires_approval:
         surfaces_touched["U-O"] = True
     
+    # Get baseline policy ID
+    baseline_policy_id = enforcer.policy.get("policy_id", "unknown")
+    
     return {
         "gate_results": gate_results,
         "surface_activations": surfaces_touched,
@@ -1018,6 +1226,11 @@ def execute_pipeline(request: str, user_id: str, enforcer: ConstitutionalEnforce
         "evidence_packet": evidence_packet,
         "short_circuited": False,
         "approval_required": approval_required,
+        "baseline_policy_id": baseline_policy_id,
+        "posture_level": posture_level,
+        "posture_rationale": posture_rationale,
+        "risk_level": risk_level,
+        "risk_drivers": risk_drivers,
         "tool_enforcement_result": {
             "tool": tool_name,
             "params": tool_params,

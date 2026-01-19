@@ -6,7 +6,7 @@ Pipeline view → Surface view → Approval modal → Audit log → Evidence exp
 
 import uuid
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
 
 
@@ -22,6 +22,11 @@ class TraceData:
     audit_entries: list = field(default_factory=list)
     verdict: str = None
     resolution: Optional[str] = None
+    baseline_policy_id: Optional[str] = None
+    posture_level: Optional[str] = None  # "L1", "L2", or "L3"
+    posture_rationale: List[str] = field(default_factory=list)
+    risk_level: Optional[str] = None  # "low", "medium", or "high"
+    risk_drivers: List[str] = field(default_factory=list)
 
 
 class TraceManager:
@@ -51,7 +56,12 @@ class TraceManager:
             pipeline_results=pipeline_results,
             surface_activations=surface_activations or {},
             verdict=pipeline_results.get("final_verdict"),
-            resolution=None
+            resolution=None,
+            baseline_policy_id=pipeline_results.get("baseline_policy_id"),
+            posture_level=pipeline_results.get("posture_level"),
+            posture_rationale=pipeline_results.get("posture_rationale", []),
+            risk_level=pipeline_results.get("risk_level"),
+            risk_drivers=pipeline_results.get("risk_drivers", [])
         )
         self.traces[trace_id] = trace
         return trace
@@ -97,6 +107,11 @@ class TraceManager:
             "approvals": trace.approvals,
             "audit_entries": trace.audit_entries,
             "verdict": trace.verdict,
-            "resolution": trace.resolution
+            "resolution": trace.resolution,
+            "baseline_policy_id": trace.baseline_policy_id,
+            "posture_level": trace.posture_level,
+            "posture_rationale": trace.posture_rationale,
+            "risk_level": trace.risk_level,
+            "risk_drivers": trace.risk_drivers
         }
 

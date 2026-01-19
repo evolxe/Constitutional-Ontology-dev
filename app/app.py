@@ -118,12 +118,31 @@ def load_policy_summary():
     
     # Get current selection or default to first file
     current_policy = st.session_state.get("selected_policy", policy_files[0] if policy_files else None)
-    selected_policy = st.sidebar.selectbox(
+    
+    # Create display labels with "(Baseline)" suffix for baseline policies
+    policy_display_options = []
+    for policy_file in policy_files:
+        # Check if policy is a baseline (by filename or by loading and checking)
+        is_baseline = "baseline" in policy_file.lower()
+        if is_baseline:
+            policy_display_options.append(f"{policy_file} (Baseline)")
+        else:
+            policy_display_options.append(policy_file)
+    
+    # Find current index
+    current_index = 0
+    if current_policy in policy_files:
+        current_index = policy_files.index(current_policy)
+    
+    selected_display = st.sidebar.selectbox(
         "Select Policy File",
-        options=policy_files,
-        index=policy_files.index(current_policy) if current_policy in policy_files else 0,
+        options=policy_display_options,
+        index=current_index,
         key="policy_selector"
     )
+    
+    # Extract actual filename from display option
+    selected_policy = selected_display.replace(" (Baseline)", "")
     
     # Reload enforcer if policy changed
     if selected_policy != st.session_state.get("selected_policy"):
@@ -154,9 +173,26 @@ def load_policy_summary():
     if st.session_state.enforcer:
         policy = st.session_state.enforcer.policy
         st.sidebar.markdown("### Policy Summary")
-        st.sidebar.write(f"**Policy ID:** {policy.get('policy_id', 'N/A')}")
-        st.sidebar.write(f"**Version:** {policy.get('policy_version', 'N/A')}")
+        
+        # Show baseline policy ID
+        baseline_policy_id = policy.get('policy_id', 'N/A')
+        baseline_version = policy.get('policy_version', 'N/A')
+        st.sidebar.write(f"**Baseline:** {baseline_policy_id} v{baseline_version}")
         st.sidebar.write(f"**Description:** {policy.get('description', 'N/A')[:80]}...")
+        
+        # Show posture from current trace if available
+        current_trace_id = st.session_state.get("current_trace_id")
+        if current_trace_id:
+            trace_manager = st.session_state.trace_manager
+            current_trace = trace_manager.get_trace(current_trace_id)
+            if current_trace and current_trace.posture_level:
+                st.sidebar.markdown("---")
+                st.sidebar.markdown("### Current Request Posture")
+                st.sidebar.write(f"**Posture:** {current_trace.posture_level}")
+                if current_trace.posture_rationale:
+                    st.sidebar.write("**Why:**")
+                    for rationale in current_trace.posture_rationale:
+                        st.sidebar.write(f"- {rationale}")
         
         st.sidebar.markdown("---")
         st.sidebar.markdown("### System Health")
@@ -325,23 +361,26 @@ if not st.session_state.simulate_mode:
     if not st.session_state.enforcer:
         st.error("Please load a policy file first. Policy file should be in the parent directory.")
     else:
-        # Canned prompts for demo
-        st.markdown("**Demo Prompts:**")
-        demo_col1, demo_col2, demo_col3 = st.columns(3)
+        # Demo prompts dropdown
+        st.markdown("**Load Demo Prompt:**")
+        demo_prompts = {
+            "Select a demo prompt...": None,
+            "Low Risk: What's the weather?": "What's the weather?",
+            "PII Export: Export all customer records with emails and SSNs to CSV": "Export all customer records with emails and SSNs to CSV",
+            "Medium Risk: Create a Jira task for Q4 compliance review": "Create a Jira task for Q4 compliance review",
+            "High Risk Denial: Delete all records": "Delete all records"
+        }
         
-        with demo_col1:
-            if st.button("What's the weather?", key="demo_weather", use_container_width=True):
-                st.session_state["user_prompt_input"] = "What's the weather?"
-                st.rerun()
+        selected_demo = st.selectbox(
+            "Demo Prompts",
+            options=list(demo_prompts.keys()),
+            key="demo_prompt_selector",
+            label_visibility="collapsed"
+        )
         
-        with demo_col2:
-            if st.button("Export customer PII", key="demo_export_pii", use_container_width=True):
-                st.session_state["user_prompt_input"] = "Export customer PII"
-                st.rerun()
-        
-        with demo_col3:
-            if st.button("Delete all records", key="demo_delete", use_container_width=True):
-                st.session_state["user_prompt_input"] = "Delete all records"
+        if selected_demo and demo_prompts[selected_demo]:
+            if st.button("Load Selected Prompt", type="primary", use_container_width=True):
+                st.session_state["user_prompt_input"] = demo_prompts[selected_demo]
                 st.rerun()
         
         # Initialize session state for user prompt if not exists
@@ -454,21 +493,21 @@ st.markdown("---")
 row1_col1, row1_col2 = st.columns([2, 1])
 
 with row1_col1:
-    # 1. Enforcement Pipeline
+    # 1. Enforcement Pipeline (WHEN)
     if current_trace and trace_dict:
         render_enforcement_pipeline_enhanced(trace_dict)
     else:
-        st.markdown("### Enforcement Pipeline")
-        st.caption("Gate runtime sequence")
+        st.markdown("### Enforcement Pipeline (8-gate runtime sequence)")
+        st.caption("Temporal sequence: what happened step-by-step")
         st.info("Submit a request to see the enforcement pipeline flow.")
     
 with row1_col2:
-    # 2. Surface Activation
+    # 2. Surface Activation (WHERE)
     if current_trace:
         render_surface_activation_compact(current_trace.surface_activations, trace_dict)
     else:
-        st.markdown("### Surface Activation")
-        st.caption("Interaction points touched")
+        st.markdown("### Surface Activation (interaction points touched)")
+        st.caption("Spatial boundaries: where governance applied")
         st.info("Submit a request to see surface activation.")
     
     st.markdown("---")

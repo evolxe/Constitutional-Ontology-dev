@@ -693,6 +693,25 @@ Return ONLY valid JSON, no markdown formatting, no code blocks."""
             if "overlays" not in policy_json:
                 policy_json["overlays"] = {}
             
+            # Add baseline_parent_policy_id if baseline_policy_path was provided
+            if baseline_policy_path:
+                # Extract policy_id from baseline policy file
+                try:
+                    import os
+                    if os.path.exists(baseline_policy_path):
+                        with open(baseline_policy_path, 'r') as f:
+                            baseline_policy_data = json.load(f)
+                            baseline_policy_id = baseline_policy_data.get("policy_id")
+                            if baseline_policy_id:
+                                policy_json["baseline_parent_policy_id"] = baseline_policy_id
+                except Exception:
+                    # If we can't read the baseline, use the filename
+                    baseline_filename = os.path.basename(baseline_policy_path)
+                    policy_json["baseline_parent_policy_id"] = baseline_filename.replace(".json", "")
+            else:
+                # Default to bank_compliance_baseline if no baseline specified
+                policy_json["baseline_parent_policy_id"] = "bank_compliance_baseline"
+            
             return policy_json
             
         except json.JSONDecodeError as e:
@@ -972,6 +991,24 @@ Return ONLY valid JSON, no markdown formatting, no code blocks."""
                 policy_json["overlays_enabled"] = []
             if "overlays" not in policy_json:
                 policy_json["overlays"] = {}
+            
+            # Add baseline_parent_policy_id if baseline_policy_path was provided
+            if baseline_policy_path:
+                # Extract policy_id from baseline policy file
+                try:
+                    if os.path.exists(baseline_policy_path):
+                        with open(baseline_policy_path, 'r') as f:
+                            baseline_policy_data = json.load(f)
+                            baseline_policy_id = baseline_policy_data.get("policy_id")
+                            if baseline_policy_id:
+                                policy_json["baseline_parent_policy_id"] = baseline_policy_id
+                except Exception:
+                    # If we can't read the baseline, use the filename
+                    baseline_filename = os.path.basename(baseline_policy_path)
+                    policy_json["baseline_parent_policy_id"] = baseline_filename.replace(".json", "")
+            else:
+                # Default to bank_compliance_baseline if no baseline specified
+                policy_json["baseline_parent_policy_id"] = "bank_compliance_baseline"
             
             # Automatically save the policy to the project folder
             saved_path = self.save_generated_policy_from_text(text_key, policy_json)

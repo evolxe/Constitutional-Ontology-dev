@@ -13,6 +13,7 @@ from typing import Dict, Any, List, Optional
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from trace_manager import TraceManager
+from ui_components import render_risk_explanation
 
 
 # Page configuration
@@ -161,6 +162,11 @@ with phase_tabs[1]:
                         st.write("**Policies Applied:**")
                         for policy in gate_result["policies"]:
                             st.caption(f"• {policy}")
+                
+                # Show risk explanation for Gate 6 (Action Approval)
+                if gate_num == 6 and trace.risk_level and trace.risk_drivers:
+                    st.markdown("---")
+                    render_risk_explanation(trace.risk_level, trace.risk_drivers)
                 
                 if gate_result.get("signals"):
                     st.markdown("**Signals:**")

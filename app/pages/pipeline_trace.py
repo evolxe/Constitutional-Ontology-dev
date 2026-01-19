@@ -10,6 +10,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from trace_manager import TraceManager
+from ui_components import render_risk_explanation
 
 
 # Page configuration
@@ -44,6 +45,11 @@ if current_trace:
         st.write(f"**Verdict:** {current_trace.verdict}")
     with col3:
         st.write(f"**Resolution:** {current_trace.resolution or 'Pending'}")
+
+    # Display risk explanation if available
+    if current_trace.risk_level and current_trace.risk_drivers:
+        st.markdown("---")
+        render_risk_explanation(current_trace.risk_level, current_trace.risk_drivers)
 
     st.markdown("---")
     st.markdown("#### Request Data")
@@ -86,6 +92,12 @@ else:
             st.write(f"**Resolution:** {trace.resolution or 'Pending'}")
             st.write(f"**Timestamp:** {trace.timestamp}")
 
+            # Display risk explanation if available
+            if trace.risk_level and trace.risk_drivers:
+                st.markdown("---")
+                render_risk_explanation(trace.risk_level, trace.risk_drivers)
+
+            st.markdown("---")
             st.markdown("#### Request Data")
             st.json(trace.request_data)
 

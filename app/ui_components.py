@@ -43,8 +43,8 @@ def render_pipeline_flow(trace_data: Dict[str, Any], expandable: bool = True):
     """Render the 8-gate pipeline as a horizontal flow diagram"""
     gate_results = trace_data.get("pipeline_results", {}).get("gate_results", [])
     
-    st.markdown("### Enforcement Pipeline")
-    st.caption("8-gate runtime sequence")
+    st.markdown("### Enforcement Pipeline (8-gate runtime sequence)")
+    st.caption("Temporal sequence: what happened step-by-step")
     
     # Color scheme by phase
     phase_colors = {
@@ -148,8 +148,8 @@ def render_pipeline_flow(trace_data: Dict[str, Any], expandable: bool = True):
 
 def render_surface_activation(surfaces_touched: Dict[str, bool], trace_data: Dict[str, Any] = None):
     """Render the 4×2 Trust Surfaces grid"""
-    st.markdown("### Surface Activation")
-    st.caption("Interaction points touched")
+    st.markdown("### Surface Activation (interaction points touched)")
+    st.caption("Spatial boundaries: where governance applied")
     
     surface_labels = {
         "U-I": {"label": "Inputs & instructions", "desc": "Inputs & instructions"},
@@ -407,19 +407,23 @@ def render_cognitive_onramp(surfaces_touched: Dict[str, bool], gate_results: Lis
     
     # Line 1: 8-surface grid in a single horizontal row (full width)
     # Green background: U-I, U-O, S-O; Gray background: all others
+    # Fixed height for surface tiles
     surface_order = ["U-I", "U-O", "S-I", "S-O", "M-I", "M-O", "A-I", "A-O"]
     green_surfaces = {"U-I", "U-O", "S-O"}
     surface_cols = st.columns(8)
     for i, surface_id in enumerate(surface_order):
         with surface_cols[i]:
-            full_label = surface_labels.get(surface_id, surface_id)
-            if surface_id in green_surfaces:
-                # Green background with white text
-                st.success(f"**{full_label}**")
-            else:
-                # Gray background - using st.info for colored background (closest to gray in Streamlit)
-                # Note: st.info gives blue background, but it's the closest we can get without CSS
-                st.info(f"**{full_label}**")
+            with st.container():
+                full_label = surface_labels.get(surface_id, surface_id)
+                # Truncate long labels for consistent sizing
+                display_label = full_label[:15] if len(full_label) > 15 else full_label
+                if surface_id in green_surfaces:
+                    # Green background with white text
+                    st.success(f"**{display_label}**")
+                else:
+                    # Gray background - using st.info for colored background (closest to gray in Streamlit)
+                    # Note: st.info gives blue background, but it's the closest we can get without CSS
+                    st.info(f"**{display_label}**")
     
     # Line 2: Gate Progress (left) and Legend (right) with space between
     progress_col, spacer_col, legend_col = st.columns([4, 1, 2])
@@ -456,8 +460,8 @@ def render_cognitive_onramp(surfaces_touched: Dict[str, bool], gate_results: Lis
 
 def render_enforcement_pipeline_enhanced(trace_data: Dict[str, Any]):
     """Render enhanced enforcement pipeline with 8 steps in a 4x2 grid"""
-    st.markdown("### Enforcement Pipeline")
-    st.caption("gate runtime sequence")
+    st.markdown("### Enforcement Pipeline (8-gate runtime sequence)")
+    st.caption("Temporal sequence: what happened step-by-step")
     
     gate_results = trace_data.get("pipeline_results", {}).get("gate_results", [])
     
@@ -472,6 +476,19 @@ def render_enforcement_pipeline_enhanced(trace_data: Dict[str, Any]):
         {"num": 8, "name": "EXPORT", "desc": "Audit packet"}
     ]
     
+    # Fixed height for gate tiles (100px)
+    tile_style = """
+    <style>
+    .gate-tile {
+        min-height: 100px;
+        max-height: 100px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    </style>
+    """
+    st.markdown(tile_style, unsafe_allow_html=True)
+    
     # Create 4x2 grid: 4 columns, 2 rows
     # Row 1: Gates 1-4
     row1_cols = st.columns(4)
@@ -481,53 +498,59 @@ def render_enforcement_pipeline_enhanced(trace_data: Dict[str, Any]):
         gate_result = next((g for g in gate_results if g.get("gate_num") == gate_num), None)
         
         with row1_cols[i]:
-            if gate_result:
-                status = gate_result.get("status", "unknown")
-                verdict = gate_result.get("verdict", "")
-                
-                # Single write call with three lines: Gate number/name, Description, Status
-                if status == "passed" or verdict == "ALLOW":
-                    st.success(f"**{gate_num} {info['name']}**\n{info['desc']}\n**PASS**")
-                elif status == "escalated" or verdict == "ESCALATE":
-                    st.warning(f"**{gate_num} {info['name']}**\n{info['desc']}\n**ESCALATE**")
-                elif status == "failed" or verdict == "DENY":
-                    st.error(f"**{gate_num} {info['name']}**\n{info['desc']}\n**DENY**")
-                else:
-                    st.write(f"**{gate_num} {info['name']}**\n{info['desc']}\n**PENDING**")
-                
-                # Show matched rules for Gate 4 (Policy Lookup)
-                if gate_num == 4:
-                    matched_rules = gate_result.get("matched_rules", [])
-                    verdict_rule = gate_result.get("verdict_rule") or gate_result.get("signals", {}).get("verdict_rule")
+            # Use container with fixed height
+            with st.container():
+                if gate_result:
+                    status = gate_result.get("status", "unknown")
+                    verdict = gate_result.get("verdict", "")
                     
-                    if matched_rules:
-                        with st.expander("View Matched Rules", expanded=False):
-                            for rule in matched_rules:
-                                rule_id = rule.get("rule_id", "Unknown")
-                                is_baseline = rule.get("baseline", False)
-                                clause_ref = rule.get("policy_clause_ref", "")
-                                description = rule.get("description", "")
-                                
-                                # Highlight the verdict rule
-                                is_verdict_rule = verdict_rule and rule_id == verdict_rule.get("rule_id")
-                                
-                                # Display rule with badge
-                                if is_baseline:
-                                    rule_text = f"**Matched Rule:** {rule_id} 🔒 **BASELINE**"
-                                else:
-                                    rule_text = f"**Matched Rule:** {rule_id} ⚙️ **CUSTOM**"
-                                
-                                if is_verdict_rule:
-                                    rule_text = f"**→ {rule_text}** (Verdict Rule)"
-                                
-                                st.markdown(rule_text)
-                                
-                                if clause_ref:
-                                    st.caption(f"Clause: {clause_ref}")
-                                if description:
-                                    st.caption(description)
-            else:
-                st.write(f"**{gate_num} {info['name']}**\n{info['desc']}\n**PENDING**")
+                    # Truncate long descriptions
+                    desc = info['desc'][:20] if len(info['desc']) > 20 else info['desc']
+                    
+                    # Single write call with three lines: Gate number/name, Description, Status
+                    if status == "passed" or verdict == "ALLOW":
+                        st.success(f"**{gate_num} {info['name']}**\n{desc}\n**PASS**")
+                    elif status == "escalated" or verdict == "ESCALATE":
+                        st.warning(f"**{gate_num} {info['name']}**\n{desc}\n**ESCALATE**")
+                    elif status == "failed" or verdict == "DENY":
+                        st.error(f"**{gate_num} {info['name']}**\n{desc}\n**DENY**")
+                    else:
+                        st.write(f"**{gate_num} {info['name']}**\n{desc}\n**PENDING**")
+                    
+                    # Show matched rules for Gate 4 (Policy Lookup)
+                    if gate_num == 4:
+                        matched_rules = gate_result.get("matched_rules", [])
+                        verdict_rule = gate_result.get("verdict_rule") or gate_result.get("signals", {}).get("verdict_rule")
+                        
+                        if matched_rules:
+                            with st.expander("View Matched Rules", expanded=False):
+                                for rule in matched_rules:
+                                    rule_id = rule.get("rule_id", "Unknown")
+                                    is_baseline = rule.get("baseline", False)
+                                    clause_ref = rule.get("policy_clause_ref", "")
+                                    description = rule.get("description", "")
+                                    
+                                    # Highlight the verdict rule
+                                    is_verdict_rule = verdict_rule and rule_id == verdict_rule.get("rule_id")
+                                    
+                                    # Display rule with badge
+                                    if is_baseline:
+                                        rule_text = f"**Matched Rule:** {rule_id} 🔒 **BASELINE**"
+                                    else:
+                                        rule_text = f"**Matched Rule:** {rule_id} ⚙️ **CUSTOM**"
+                                    
+                                    if is_verdict_rule:
+                                        rule_text = f"**→ {rule_text}** (Verdict Rule)"
+                                    
+                                    st.markdown(rule_text)
+                                    
+                                    if clause_ref:
+                                        st.caption(f"Clause: {clause_ref}")
+                                    if description:
+                                        st.caption(description)
+                else:
+                    desc = info['desc'][:20] if len(info['desc']) > 20 else info['desc']
+                    st.write(f"**{gate_num} {info['name']}**\n{desc}\n**PENDING**")
     
     # Row 2: Gates 5-8
     row2_cols = st.columns(4)
@@ -537,21 +560,27 @@ def render_enforcement_pipeline_enhanced(trace_data: Dict[str, Any]):
         gate_result = next((g for g in gate_results if g.get("gate_num") == gate_num), None)
         
         with row2_cols[i - 4]:
-            if gate_result:
-                status = gate_result.get("status", "unknown")
-                verdict = gate_result.get("verdict", "")
-                
-                # Single write call with three lines: Gate number/name, Description, Status
-                if status == "passed" or verdict == "ALLOW":
-                    st.success(f"**{gate_num} {info['name']}**\n{info['desc']}\n**PASS**")
-                elif status == "escalated" or verdict == "ESCALATE":
-                    st.warning(f"**{gate_num} {info['name']}**\n{info['desc']}\n**ESCALATE**")
-                elif status == "failed" or verdict == "DENY":
-                    st.error(f"**{gate_num} {info['name']}**\n{info['desc']}\n**DENY**")
+            # Use container with fixed height
+            with st.container():
+                if gate_result:
+                    status = gate_result.get("status", "unknown")
+                    verdict = gate_result.get("verdict", "")
+                    
+                    # Truncate long descriptions
+                    desc = info['desc'][:20] if len(info['desc']) > 20 else info['desc']
+                    
+                    # Single write call with three lines: Gate number/name, Description, Status
+                    if status == "passed" or verdict == "ALLOW":
+                        st.success(f"**{gate_num} {info['name']}**\n{desc}\n**PASS**")
+                    elif status == "escalated" or verdict == "ESCALATE":
+                        st.warning(f"**{gate_num} {info['name']}**\n{desc}\n**ESCALATE**")
+                    elif status == "failed" or verdict == "DENY":
+                        st.error(f"**{gate_num} {info['name']}**\n{desc}\n**DENY**")
+                    else:
+                        st.write(f"**{gate_num} {info['name']}**\n{desc}\n**PENDING**")
                 else:
-                    st.write(f"**{gate_num} {info['name']}**\n{info['desc']}\n**PENDING**")
-            else:
-                st.write(f"**{gate_num} {info['name']}**\n{info['desc']}\n**PENDING**")
+                    desc = info['desc'][:20] if len(info['desc']) > 20 else info['desc']
+                    st.write(f"**{gate_num} {info['name']}**\n{desc}\n**PENDING**")
 
 
 def render_escalation_details(trace_data: Dict[str, Any], approval_data: Optional[Dict[str, Any]] = None):
@@ -693,7 +722,7 @@ def render_policy_diff(baseline_policy: Optional[Dict[str, Any]] = None, current
     
     policy_view = st.radio(
         "Policy View", 
-        ["Baseline Only", "Custom"], 
+        ["Baseline Only", "Baseline + Custom", "Diff"], 
         horizontal=True, 
         key="policy_view_selector"
     )
@@ -719,32 +748,49 @@ def render_policy_diff(baseline_policy: Optional[Dict[str, Any]] = None, current
             }
     
     if policy_view == "Baseline Only":
-        # Show summary text
-        if baseline_policy and current_policy:
-            current_policy_id = current_policy.get("policy_id", "")
-            baseline_policy_id = baseline_policy.get("policy_id", "")
-            if current_policy_id == baseline_policy_id:
-                st.info("+2 escalation triggers, -1 tool")
-            else:
-                diff = compare_policies(baseline_policy, current_policy)
-                summary_parts = []
-                if diff["added_escalation_triggers"]:
-                    summary_parts.append(f"+{len(diff['added_escalation_triggers'])} escalation trigger(s)")
-                if diff["removed_tools"]:
-                    summary_parts.append(f"−{len(diff['removed_tools'])} tool(s)")
-                if diff["tightened_thresholds"]:
-                    summary_parts.append(f"↑{len(diff['tightened_thresholds'])} threshold(s) tightened")
-                if diff["new_approval_requirements"]:
-                    summary_parts.append(f"⚠{len(diff['new_approval_requirements'])} new approval requirement(s)")
-                if summary_parts:
-                    st.info(", ".join(summary_parts))
-                else:
-                    st.info("No changes detected")
+        # Show only baseline rules (locked, cannot disable)
+        baseline_rules_list = []
+        if baseline_policy and "rules" in baseline_policy:
+            baseline_rules_list = [r for r in baseline_policy["rules"] if r.get("baseline", False)]
+        elif current_policy and "rules" in current_policy:
+            baseline_rules_list = [r for r in current_policy["rules"] if r.get("baseline", False)]
+        
+        if baseline_rules_list:
+            st.markdown("#### Baseline Rules (Always Enforced)")
+            for rule in baseline_rules_list:
+                rule_id = rule.get("rule_id", "Unknown")
+                description = rule.get("description", "")
+                clause_ref = rule.get("policy_clause_ref", "")
+                
+                # Create columns for rule display
+                col1, col2, col3 = st.columns([3, 1, 1])
+                
+                with col1:
+                    # Rule ID and description
+                    rule_text = f"**{rule_id}** - {description}"
+                    if clause_ref:
+                        rule_text += f" ({clause_ref})"
+                    st.write(rule_text)
+                
+                with col2:
+                    st.markdown("🔒 **BASELINE**")
+                
+                with col3:
+                    # Baseline rules are always enabled, show disabled toggle
+                    st.checkbox(
+                        "Enabled",
+                        value=True,
+                        disabled=True,
+                        key=f"rule_toggle_{rule_id}",
+                        help="Regulatory floor — cannot be disabled"
+                    )
+                
+                st.markdown("---")
         else:
-            st.info("+2 escalation triggers, -1 tool")
+            st.info("No baseline rules found")
     
-    elif policy_view == "Custom":
-        # Show rule list with badges and toggles
+    elif policy_view == "Baseline + Custom":
+        # Show both baseline and custom rules with badges and toggles
         if rules:
             st.markdown("#### Rule List")
             for rule in rules:
@@ -805,12 +851,101 @@ def render_policy_diff(baseline_policy: Optional[Dict[str, Any]] = None, current
                 st.markdown("---")
         else:
             st.info("No rules defined in policy")
+    
+    elif policy_view == "Diff":
+        # Show only custom rules and changes vs baseline
+        if baseline_policy and current_policy:
+            baseline_rules = {r.get("rule_id"): r for r in baseline_policy.get("rules", [])}
+            current_rules = {r.get("rule_id"): r for r in current_policy.get("rules", [])}
+            
+            # Find custom rules (rules in current but not in baseline, or rules with baseline=false)
+            custom_rules = []
+            for rule in current_policy.get("rules", []):
+                rule_id = rule.get("rule_id")
+                is_baseline = rule.get("baseline", False)
+                if not is_baseline or rule_id not in baseline_rules:
+                    custom_rules.append(rule)
+            
+            if custom_rules:
+                st.markdown("#### Custom Rules (Changes from Baseline)")
+                for rule in custom_rules:
+                    rule_id = rule.get("rule_id", "Unknown")
+                    description = rule.get("description", "")
+                    severity = rule.get("severity", "")
+                    clause_ref = rule.get("policy_clause_ref", "")
+                    
+                    # Create columns for rule display
+                    col1, col2, col3 = st.columns([3, 1, 1])
+                    
+                    with col1:
+                        # Rule ID and description
+                        rule_text = f"**{rule_id}** - {description}"
+                        if clause_ref:
+                            rule_text += f" ({clause_ref})"
+                        st.write(rule_text)
+                    
+                    with col2:
+                        st.markdown("⚙️ **CUSTOM**")
+                    
+                    with col3:
+                        # Custom rules can be toggled
+                        current_state = st.session_state.rule_states.get(rule_id, {}).get("enabled", rule.get("enabled", True))
+                        new_state = st.checkbox(
+                            "Enabled",
+                            value=current_state,
+                            disabled=False,
+                            key=f"rule_toggle_{rule_id}",
+                            help="Organizational policy — can be adjusted"
+                        )
+                        # Update session state if changed
+                        if new_state != current_state:
+                            st.session_state.rule_states[rule_id] = {
+                                "enabled": new_state,
+                                "baseline": False
+                            }
+                            rule["enabled"] = new_state
+                            st.rerun()
+                    
+                    st.markdown("---")
+            else:
+                st.info("No custom rules found. All rules match baseline.")
+            
+            # Show policy diff summary
+            diff = compare_policies(baseline_policy, current_policy)
+            if diff["added_escalation_triggers"] or diff["removed_tools"] or diff["tightened_thresholds"] or diff["new_approval_requirements"]:
+                st.markdown("#### Policy Changes Summary")
+                summary_parts = []
+                if diff["added_escalation_triggers"]:
+                    summary_parts.append(f"+{len(diff['added_escalation_triggers'])} escalation trigger(s)")
+                if diff["removed_tools"]:
+                    summary_parts.append(f"−{len(diff['removed_tools'])} tool(s)")
+                if diff["tightened_thresholds"]:
+                    summary_parts.append(f"↑{len(diff['tightened_thresholds'])} threshold(s) tightened")
+                if diff["new_approval_requirements"]:
+                    summary_parts.append(f"⚠{len(diff['new_approval_requirements'])} new approval requirement(s)")
+                if summary_parts:
+                    st.info(", ".join(summary_parts))
+        else:
+            st.info("Baseline and current policies required for diff view")
 
 
 def render_surface_activation_compact(surfaces_touched: Dict[str, bool], trace_data: Dict[str, Any] = None):
     """Render compact surface activation for right column"""
-    st.markdown("### Surface Activation")
-    st.caption("Interaction points touched")
+    st.markdown("### Surface Activation (interaction points touched)")
+    st.caption("Spatial boundaries: where governance applied")
+    
+    # Fixed height for surface tiles (120px)
+    tile_style = """
+    <style>
+    .surface-tile {
+        min-height: 120px;
+        max-height: 120px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    </style>
+    """
+    st.markdown(tile_style, unsafe_allow_html=True)
     
     surface_labels = {
         "U-I": "User Inbound",
@@ -848,15 +983,18 @@ def render_surface_activation_compact(surfaces_touched: Dict[str, bool], trace_d
         with cols[0]:
             st.write(surface_type)
         
-        # Columns 2-3: Surface buttons with full labels
+        # Columns 2-3: Surface buttons with full labels (fixed height)
         for idx, (surface_id, _) in enumerate(row):
             with cols[idx + 1]:
-                activated = surfaces_touched.get(surface_id, False)
-                full_label = surface_labels.get(surface_id, surface_id)
-                if activated:
-                    st.success(f"**{full_label}**")
-                else:
-                    st.info(f"**{full_label}**")
+                with st.container():
+                    activated = surfaces_touched.get(surface_id, False)
+                    full_label = surface_labels.get(surface_id, surface_id)
+                    # Truncate long labels
+                    display_label = full_label[:25] if len(full_label) > 25 else full_label
+                    if activated:
+                        st.success(f"**{display_label}**")
+                    else:
+                        st.info(f"**{display_label}**")
 
 
 def render_approval_queue_compact(pending_approvals: List[Dict[str, Any]]):
@@ -880,3 +1018,22 @@ def render_approval_queue_compact(pending_approvals: List[Dict[str, Any]]):
             if idx < len(pending_approvals) - 1:
                 st.markdown("---")
 
+
+def render_risk_explanation(risk_level: str, risk_drivers: List[str]):
+    """Render risk level and drivers"""
+    st.markdown("### Explain Risk")
+    if risk_level:
+        risk_level_upper = risk_level.upper()
+        if risk_level == "high":
+            st.error(f"**Risk Level:** {risk_level_upper}")
+        elif risk_level == "medium":
+            st.warning(f"**Risk Level:** {risk_level_upper}")
+        else:
+            st.success(f"**Risk Level:** {risk_level_upper}")
+    
+    if risk_drivers:
+        st.write("**Risk Drivers:**")
+        for driver in risk_drivers:
+            st.write(f"- {driver}")
+    else:
+        st.info("No risk drivers identified")
