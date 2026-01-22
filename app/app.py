@@ -362,14 +362,10 @@ def get_mock_state():
 
 def process_sandbox_request(user_prompt: str, user_id: str = "analyst_123"):
     """Process a request through the full pipeline"""
-    policy_context = st.session_state.get("policy_context")
+    policy_context = st.session_state.get("policy_context")  # Optional - policies are cosmetic
     trace_manager = st.session_state.trace_manager
     
-    if not policy_context:
-        st.error("No policy selected. Please select a policy before submitting requests.")
-        return None
-    
-    # Execute pipeline with policy context
+    # Execute pipeline - policy_context is optional (policies don't influence execution)
     pipeline_results = execute_pipeline(user_prompt, user_id, policy_context)
     
     # Create trace - each request gets its own unique trace_id
@@ -497,15 +493,10 @@ if not st.session_state.simulate_mode:
     st.markdown("**Load Demo Prompt:**")
     demo_prompts = {
         "Select a demo prompt...": None,
-        "Low Risk: What's the weather?": "What's the weather?",
-        "L2 Escalate: Create a Jira task for Q4 compliance review": "Create a Jira task for Q4 compliance review",
-        "L2 Escalate: Update the compliance document with new regulations": "Update the compliance document with new regulations",
-        "L2 Escalate: Export quarterly report data to CSV file": "Export quarterly report data to CSV file",
-        "L2 Escalate: Write a summary of the compliance audit findings": "Write a summary of the compliance audit findings",
-        "L3 Escalate: Export customer contact information": "Export customer contact information",
-        "L3 Escalate: Export all customer records with emails and SSNs to CSV": "Export all customer records with emails and SSNs to CSV",
-        "L3 Escalate: Get customer account numbers for analysis": "Get customer account numbers for analysis",
-        "High Risk Denial: Delete all records": "Delete all records"
+        "PASS: What's the weather?": "What's the weather?",
+        "ESCALATE: Create a jira ticket": "Create a jira ticket",
+        "DENY: Delete all records": "Delete all records",
+        "DENY: Export customer PII data": "Export customer PII data"
     }
     
     # Demo prompts dropdown - selection persists across policy changes via key
@@ -528,9 +519,7 @@ if not st.session_state.simulate_mode:
             st.session_state["user_prompt_input"] = demo_prompts[selected_demo]
             st.rerun()
     
-    if not policy_context:
-        st.error("⚠️ **No policy selected.** Please select a policy from the sidebar before submitting requests.")
-        st.info("Policy selection is required for all requests. No execution without policy.")
+    # Policy selection is optional - policies are independent and don't influence execution
     
     # Initialize session state for user prompt if not exists
     if "user_prompt_input" not in st.session_state:
@@ -545,7 +534,7 @@ if not st.session_state.simulate_mode:
     
     col1, col2 = st.columns([1, 4])
     with col1:
-        submit_button = st.button("Submit Request", type="primary", disabled=not policy_context)
+        submit_button = st.button("Submit Request", type="primary")
         
         with col2:
             # Show highlighted success message next to button if submission was successful
