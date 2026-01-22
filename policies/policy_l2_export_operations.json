@@ -1,0 +1,408 @@
+{
+  "policy_id": "l2_export_operations",
+  "policy_version": "1.0.0",
+  "created": "2024-12-20",
+  "description": "L2 policy for medium-risk export and write operations - requires approval for data export and externalization",
+  "baseline_parent_policy_id": "bank_compliance_baseline",
+  "dials": {
+    "autonomy": {
+      "level": "L2",
+      "label": "act_with_approval",
+      "description": "Agent can act but requires human approval for export and write operations"
+    },
+    "personalization": {
+      "level": "L2",
+      "label": "moderate_personalization",
+      "description": "Moderate personalization with approval requirements"
+    },
+    "memory": {
+      "level": "L2",
+      "label": "moderate_memory",
+      "description": "Moderate memory use with controls"
+    },
+    "inter_agent": {
+      "level": "L1",
+      "label": "none",
+      "description": "No inter-agent communication"
+    }
+  },
+  "gates": {
+    "U-I": {
+      "name": "User Inbound",
+      "direction": "user_to_agent",
+      "allow": [
+        "receive_instructions",
+        "receive_feedback",
+        "receive_edits"
+      ],
+      "controls": [
+        {
+          "type": "auth",
+          "params": {
+            "method": "sso",
+            "session_binding": true
+          }
+        },
+        {
+          "type": "scope_lock",
+          "params": {
+            "bind_to": "working_doc_ids"
+          }
+        },
+        {
+          "type": "injection_detect",
+          "params": {
+            "scan_pasted_text": true
+          }
+        },
+        {
+          "type": "log",
+          "params": {
+            "capture": [
+              "user_id",
+              "request_type",
+              "timestamp"
+            ]
+          }
+        }
+      ],
+      "deny": [
+        "request_export_external",
+        "request_include_customer_data"
+      ]
+    },
+    "U-O": {
+      "name": "User Outbound",
+      "direction": "agent_to_user",
+      "allow": [
+        "present_drafts",
+        "ask_clarifying_questions",
+        "show_citations",
+        "notify_task_created"
+      ],
+      "controls": [
+        {
+          "type": "provenance_required",
+          "params": {
+            "apply_to": "regulatory_claims"
+          }
+        },
+        {
+          "type": "no_deception",
+          "params": {
+            "disclose_limitations": true
+          }
+        },
+        {
+          "type": "redaction",
+          "params": {
+            "strip": [
+              "customer_data",
+              "regulated_data"
+            ]
+          }
+        },
+        {
+          "type": "log",
+          "params": {
+            "capture": [
+              "response",
+              "citations"
+            ]
+          }
+        }
+      ],
+      "deny": [
+        "share_to_external_recipients",
+        "claims_without_citations"
+      ]
+    },
+    "S-I": {
+      "name": "System Inbound",
+      "direction": "system_to_agent",
+      "allow": [
+        "receive_sharepoint_docs",
+        "receive_occ_fdic_text"
+      ],
+      "controls": [
+        {
+          "type": "provenance_required",
+          "params": {
+            "capture": [
+              "source_uri",
+              "doc_hash",
+              "retrieval_timestamp"
+            ]
+          }
+        },
+        {
+          "type": "malware_scan"
+        },
+        {
+          "type": "dlp_scan"
+        },
+        {
+          "type": "injection_scrub",
+          "params": {
+            "strip_hidden_instructions": true
+          }
+        },
+        {
+          "type": "log",
+          "params": {
+            "events": [
+              "retrieval_event",
+              "query"
+            ]
+          }
+        }
+      ],
+      "deny": [
+        "files_with_macros",
+        "files_with_executables",
+        "sources_not_on_allowlist"
+      ]
+    },
+    "S-O": {
+      "name": "System Outbound",
+      "direction": "agent_to_system",
+      "allow": [
+        {
+          "action": "read",
+          "target": "sharepoint"
+        },
+        {
+          "action": "read",
+          "target": "occ_fdic_db"
+        },
+        {
+          "action": "write",
+          "target": "draft_doc",
+          "controls": [
+            "approval_hitl",
+            "log"
+          ]
+        },
+        {
+          "action": "execute",
+          "target": "export_data",
+          "controls": [
+            "approval_hitl",
+            "log",
+            "audit_trail"
+          ]
+        },
+        {
+          "action": "execute",
+          "target": "csv_export",
+          "controls": [
+            "approval_hitl",
+            "log",
+            "audit_trail"
+          ]
+        },
+        {
+          "action": "execute",
+          "target": "create_file",
+          "controls": [
+            "approval_hitl",
+            "log"
+          ]
+        },
+        {
+          "action": "execute",
+          "target": "modify_document",
+          "controls": [
+            "approval_hitl",
+            "log"
+          ]
+        },
+        {
+          "action": "write",
+          "target": "modify_document",
+          "controls": [
+            "approval_hitl",
+            "log"
+          ]
+        }
+      ],
+      "controls": [
+        {
+          "type": "log",
+          "params": {
+            "capture": [
+              "tool_call",
+              "params",
+              "result"
+            ]
+          }
+        }
+      ],
+      "deny": [
+        "delete_all_records",
+        "delete_records"
+      ]
+    },
+    "M-I": {
+      "name": "Memory Inbound",
+      "direction": "memory_to_agent",
+      "allow": [
+        "retrieve_writing_style",
+        "retrieve_citation_format",
+        "retrieve_templates"
+      ],
+      "controls": [
+        {
+          "type": "data_minimization"
+        },
+        {
+          "type": "acl",
+          "params": {
+            "scope": "per_user"
+          }
+        },
+        {
+          "type": "log",
+          "params": {
+            "capture": [
+              "what_retrieved"
+            ]
+          }
+        },
+        {
+          "type": "versioning",
+          "params": {
+            "track_template_provenance": true
+          }
+        }
+      ],
+      "deny": [
+        "retrieve_regulated_data",
+        "cross_user_memory_access"
+      ]
+    },
+    "M-O": {
+      "name": "Memory Outbound",
+      "direction": "agent_to_memory",
+      "allow": [
+        "store_citation_format",
+        "store_templates",
+        "store_style_prefs"
+      ],
+      "controls": [
+        {
+          "type": "user_controls",
+          "params": {
+            "allow": [
+              "view",
+              "edit",
+              "delete"
+            ]
+          }
+        },
+        {
+          "type": "retention_policy",
+          "params": {
+            "max_days": 365,
+            "review_required": true
+          }
+        },
+        {
+          "type": "encryption",
+          "params": {
+            "at_rest": true
+          }
+        },
+        {
+          "type": "redaction",
+          "params": {
+            "apply_before_store": true
+          }
+        },
+        {
+          "type": "log"
+        }
+      ],
+      "deny": [
+        "store_pii",
+        "store_phi",
+        "store_customer_account_info",
+        "store_full_document_contents"
+      ]
+    },
+    "A-I": {
+      "name": "Agent Inbound",
+      "direction": "other_agent_to_agent",
+      "allow": [],
+      "controls": [],
+      "deny": [
+        "*"
+      ],
+      "deny_reason": "Inter-agent communication disabled"
+    },
+    "A-O": {
+      "name": "Agent Outbound",
+      "direction": "agent_to_other_agent",
+      "allow": [],
+      "controls": [],
+      "deny": [
+        "*"
+      ],
+      "deny_reason": "Inter-agent communication disabled"
+    }
+  },
+  "overlays_enabled": [],
+  "overlays": {},
+  "rules": [
+    {
+      "rule_id": "R-001",
+      "baseline": true,
+      "enabled": true,
+      "description": "Require authentication for all user inputs",
+      "severity": "deny",
+      "policy_clause_ref": "§1.1",
+      "applies_to_gate": "U-I",
+      "applies_to_control": "auth"
+    },
+    {
+      "rule_id": "R-011",
+      "baseline": true,
+      "enabled": true,
+      "description": "Block delete operations on all records",
+      "severity": "deny",
+      "policy_clause_ref": "§3.2",
+      "applies_to_gate": "S-O",
+      "applies_to_control": "deny_pattern_check"
+    },
+    {
+      "rule_id": "R-202",
+      "baseline": false,
+      "enabled": true,
+      "description": "Require approval for content modification operations (write/modify documents)",
+      "severity": "escalate",
+      "policy_clause_ref": "§4.2",
+      "applies_to_gate": "S-O",
+      "applies_to_control": "content_modification_check"
+    },
+    {
+      "rule_id": "R-203",
+      "baseline": false,
+      "enabled": true,
+      "description": "Require approval for all export operations (CSV, data export)",
+      "severity": "escalate",
+      "policy_clause_ref": "§4.3",
+      "applies_to_gate": "S-O",
+      "applies_to_control": "export_check"
+    },
+    {
+      "rule_id": "R-204",
+      "baseline": false,
+      "enabled": true,
+      "description": "Require approval for file creation and modification operations",
+      "severity": "escalate",
+      "policy_clause_ref": "§4.4",
+      "applies_to_gate": "S-O",
+      "applies_to_control": "create_file_check"
+    }
+  ]
+}

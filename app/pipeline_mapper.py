@@ -154,6 +154,47 @@ def get_matched_rules(request: str, intent_category: str, data_class: str, tool_
             if r145_enabled and (data_class == "regulated" or (tool_name and "export" in tool_name.lower())):
                 matched = True
         
+        # R-201: Task management operations (Gate 5/6 / S-O)
+        elif rule_id == "R-201" and applies_to_gate == "S-O":
+            if tool_name and ("jira" in tool_name.lower() or "task" in tool_name.lower()):
+                matched = True
+        
+        # R-202: Content modification operations (Gate 5/6 / S-O)
+        elif rule_id == "R-202" and applies_to_gate == "S-O":
+            if intent_category == "content_modification" or (tool_name and ("modify" in tool_name.lower() or "update" in tool_name.lower() or "edit" in tool_name.lower())):
+                matched = True
+        
+        # R-203: Export operations (Gate 5/6 / S-O)
+        elif rule_id == "R-203" and applies_to_gate == "S-O":
+            if tool_name and ("export" in tool_name.lower() or "csv" in tool_name.lower()):
+                matched = True
+        
+        # R-204: File creation operations (Gate 5/6 / S-O)
+        elif rule_id == "R-204" and applies_to_gate == "S-O":
+            if tool_name and ("create" in tool_name.lower() or "write" in tool_name.lower() or "modify" in tool_name.lower() or "update" in tool_name.lower()):
+                matched = True
+        
+        # R-301, R-302, R-303: L3 PII strict rules
+        elif rule_id in ["R-301", "R-302", "R-303"]:
+            if rule_id == "R-301" and applies_to_gate == "S-O":
+                if tool_name and "export" in tool_name.lower():
+                    matched = True
+            elif rule_id == "R-302" and applies_to_gate == "Gate 3":
+                if data_class == "regulated" or data_class == "pii":
+                    matched = True
+            elif rule_id == "R-303" and applies_to_gate == "S-I":
+                if data_class == "regulated":
+                    matched = True
+        
+        # R-304, R-305: L3 PII escalate rules
+        elif rule_id in ["R-304", "R-305"]:
+            if rule_id == "R-304" and applies_to_gate == "Gate 3":
+                if data_class == "regulated" or data_class == "pii":
+                    matched = True
+            elif rule_id == "R-305" and applies_to_gate == "S-O":
+                if tool_name and "export" in tool_name.lower():
+                    matched = True
+        
         if matched:
             matched_rules.append({
                 "rule_id": rule_id,
@@ -220,6 +261,22 @@ def infer_tool_and_params(user_input: str, intent_category: str) -> tuple:
                     topic = parts[1].strip()
                     break
         return "write_draft", {"topic": topic[:200], "content_type": "document"}
+    
+    elif intent_category == "content_modification" or any(word in user_lower for word in ["update", "modify", "edit", "change"]):
+        # Extract document/target name
+        doc_keywords = ["document", "file", "record", "report", "policy", "compliance"]
+        doc_name = "document"
+        for keyword in doc_keywords:
+            if keyword in user_lower:
+                # Try to extract the document name
+                pattern = rf'{keyword}\s+([^\s,\.]+)'
+                match = re.search(pattern, user_input, re.IGNORECASE)
+                if match:
+                    doc_name = match.group(1)
+                else:
+                    doc_name = keyword
+                break
+        return "modify_document", {"document": doc_name, "action": "update"}
     
     # No tool inferred (e.g., "What's the weather?" - informational query)
     return None, {}
@@ -1146,24 +1203,55 @@ def execute_pipeline(request: str, user_id: str, policy_context: PolicyContext) 
         # Gate 6: Action Approval - Derive verdict from policy rules
         start_time_gate6 = time.time()
         
-        # Aggregate all matched rules from Gate 4 and their severities
+        # Re-match rules with the actual tool name (in case tool wasn't inferred in Gate 4)
+        matched_rules_gate6 = get_matched_rules(request, intent_category, data_class, tool_name, policy_context)
+        # Use Gate 6 matched rules if we have them, otherwise fall back to Gate 4
+        if matched_rules_gate6:
+            matched_rules = matched_rules_gate6
+        
+        # Aggregate all matched rules and their severities
         # Verdict selection logic: deny > escalate > allow
         verdict_rule_id = None
         verdict_rule_type = None
         verdict_rationale = None
         
-        # Check for deny rules first
-        deny_rules = [r for r in matched_rules if r.get("severity") == "deny"]
-        if deny_rules:
-            verdict_rule = deny_rules[0]  # Use first deny rule
+        # Check for escalate rules first (if enforcement requires approval OR if escalate rules match)
+        escalate_rules = [r for r in matched_rules if r.get("severity") == "escalate"]
+        if enforcement_result.decision == Decision.REQUIRE_APPROVAL or escalate_rules:
+            # Find escalate rule that caused this
+            if escalate_rules:
+                verdict_rule = escalate_rules[0]
+                verdict_rule_id = verdict_rule.get("rule_id", "Unknown")
+                verdict_rule_type = "BASELINE" if verdict_rule.get("baseline", False) else "CUSTOM"
+            else:
+                # Fallback to verdict rule from Gate 4
+                if verdict_rule:
+                    verdict_rule_id = verdict_rule.get("rule_id", "Unknown")
+                    verdict_rule_type = "BASELINE" if verdict_rule.get("baseline", False) else "CUSTOM"
+            
+            verdict = "ESCALATE"
+            status = "escalated"
+            final_verdict = "ESCALATE"
+            requires_approval = True
+            approval_required = True
+            verdict_rationale = f"Verdict derived from rule {verdict_rule_id} ({verdict_rule_type}) - severity: escalate" if verdict_rule_id else "Human approval required"
+        # Check for deny rules (only if no escalate rules matched)
+        elif enforcement_result.decision == Decision.DENY:
+            deny_rules = [r for r in matched_rules if r.get("severity") == "deny"]
+            if deny_rules:
+                verdict_rule = deny_rules[0]  # Use first deny rule
+                verdict_rule_id = verdict_rule.get("rule_id", "Unknown")
+                verdict_rule_type = "BASELINE" if verdict_rule.get("baseline", False) else "CUSTOM"
+                verdict_rationale = f"Verdict derived from rule {verdict_rule_id} ({verdict_rule_type}) - severity: deny"
+            else:
+                # Enforcer denied but no deny rule matched - use enforcer's denial reason
+                verdict_rule_id = None
+                verdict_rule_type = None
+                verdict_rationale = enforcement_result.denial_reason or "Action denied by policy enforcement"
+            
             verdict = "DENY"
             status = "failed"
             final_verdict = "DENY"
-            verdict_rule_id = verdict_rule.get("rule_id", "Unknown")
-            verdict_rule_type = "BASELINE" if verdict_rule.get("baseline", False) else "CUSTOM"
-            verdict_rationale = f"Verdict derived from rule {verdict_rule_id} ({verdict_rule_type}) - severity: deny"
-        # Check for escalate rules
-        elif enforcement_result.decision == Decision.REQUIRE_APPROVAL:
             # Find escalate rule that caused this
             escalate_rules = [r for r in matched_rules if r.get("severity") == "escalate"]
             if escalate_rules:
@@ -1365,6 +1453,9 @@ def execute_pipeline(request: str, user_id: str, policy_context: PolicyContext) 
     # Get policy information from policy context
     baseline_policy_id = policy_context.policy_id
     
+    # Extract audit entries from enforcer before it's destroyed
+    enforcer_audit_entries = enforcer.get_audit_log() if enforcer else []
+    
     return {
         "gate_results": gate_results,
         "surface_activations": surfaces_touched,
@@ -1389,6 +1480,7 @@ def execute_pipeline(request: str, user_id: str, policy_context: PolicyContext) 
             "decision": tool_decision.value if tool_decision and hasattr(tool_decision, 'value') else (str(tool_decision) if tool_decision else None),
             "controls_applied": tool_enforcement_result.controls_applied if tool_enforcement_result else [],
             "evidence": tool_enforcement_result.evidence if tool_enforcement_result else {}
-        } if tool_enforcement_result else None
+        } if tool_enforcement_result else None,
+        "enforcer_audit_entries": enforcer_audit_entries  # Audit entries from enforcer during pipeline execution
     }
 

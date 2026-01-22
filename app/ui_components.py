@@ -754,6 +754,12 @@ def render_policy_diff(baseline_policy: Optional[Dict[str, Any]] = None, current
     """Render policy diff section with Baseline vs Custom rule management"""
     st.markdown("### Policy Diff (vs Baseline):")
     
+    # Show active baseline information if available
+    if baseline_policy:
+        baseline_policy_id = baseline_policy.get('policy_id', 'Unknown')
+        baseline_version = baseline_policy.get('policy_version', 'N/A')
+        st.info(f"**Active Baseline:** `{baseline_policy_id}` v{baseline_version}")
+    
     # Policy View selector - renamed from Policy Mode
     # Default to "Baseline Only" if not set
     if "policy_view_selector" not in st.session_state:

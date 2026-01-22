@@ -41,6 +41,7 @@ class TraceManager:
     
     def __init__(self):
         self.traces: Dict[str, TraceData] = {}
+        self.audit_log: List[Dict[str, Any]] = []  # Centralized audit log storage
     
     def generate_trace_id(self) -> str:
         """Generate a unique trace ID"""
@@ -120,6 +121,35 @@ class TraceManager:
         """Add audit entry to trace"""
         if trace_id in self.traces:
             self.traces[trace_id].audit_entries.append(audit_entry)
+    
+    def add_audit_entry(self, trace_id: str, gate: str, action: str, decision: str, user_id: str, controls: list, evidence: dict):
+        """Add an audit entry to the centralized audit log"""
+        from datetime import datetime
+        audit_entry = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "gate": gate,
+            "action": action,
+            "decision": decision,
+            "user_id": user_id,
+            "controls": controls,
+            "evidence": evidence
+        }
+        # Ensure trace_id is in evidence for linking
+        if "trace_id" not in audit_entry["evidence"]:
+            audit_entry["evidence"]["trace_id"] = trace_id
+        
+        # Add to centralized audit log
+        self.audit_log.append(audit_entry)
+        
+        # Also add to trace if it exists
+        if trace_id in self.traces:
+            self.traces[trace_id].audit_entries.append(audit_entry)
+        
+        return audit_entry
+    
+    def get_audit_log(self) -> List[Dict[str, Any]]:
+        """Retrieve all audit entries from centralized storage"""
+        return self.audit_log
     
     def get_all_traces(self) -> list:
         """Get all traces as dictionaries"""

@@ -94,6 +94,33 @@ def load_policy_json(policy_filename: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def find_baseline_policy_file(baseline_parent_policy_id: Optional[str]) -> Optional[str]:
+    """
+    Map baseline_parent_policy_id to actual policy filename.
+    Returns the filename if found, None otherwise.
+    """
+    if not baseline_parent_policy_id:
+        return None
+    
+    policy_files = get_policy_files()
+    
+    # Try exact match first (e.g., "bank_compliance_baseline" -> "policy_bank_compliance_baseline.json")
+    # Check if any policy file contains the baseline_parent_policy_id
+    for policy_file in policy_files:
+        # Remove .json extension and "policy_" prefix for comparison
+        policy_id_from_file = policy_file.replace('.json', '').replace('policy_', '')
+        if policy_id_from_file == baseline_parent_policy_id:
+            return policy_file
+    
+    # Try loading each policy to check its policy_id field
+    for policy_file in policy_files:
+        policy_json = load_policy_json(policy_file)
+        if policy_json and policy_json.get("policy_id") == baseline_parent_policy_id:
+            return policy_file
+    
+    return None
+
+
 def load_policy_file(policy_filename: str):
     """Load a policy file and create enforcer from policies directory"""
     parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -203,11 +230,26 @@ def load_policy_summary():
         policy = st.session_state.enforcer.policy
         st.sidebar.markdown("### Policy Summary")
         
-        # Show baseline policy ID
-        baseline_policy_id = policy.get('policy_id', 'N/A')
-        baseline_version = policy.get('policy_version', 'N/A')
-        st.sidebar.write(f"**Baseline:** {baseline_policy_id} v{baseline_version}")
+        # Show current policy information
+        current_policy_id = policy.get('policy_id', 'N/A')
+        current_version = policy.get('policy_version', 'N/A')
+        st.sidebar.write(f"**Current Policy:** {current_policy_id} v{current_version}")
         st.sidebar.write(f"**Description:** {policy.get('description', 'N/A')[:80]}...")
+        
+        # Show baseline parent information if it exists
+        baseline_parent_policy_id = policy.get('baseline_parent_policy_id')
+        if baseline_parent_policy_id:
+            st.sidebar.markdown("---")
+            st.sidebar.write(f"**Baseline Parent:** `{baseline_parent_policy_id}`")
+            st.sidebar.caption(f"This policy inherits from `{baseline_parent_policy_id}`")
+        else:
+            # Check if current policy is itself a baseline (by filename or policy_id)
+            selected_policy = st.session_state.get("selected_policy", "")
+            is_baseline = "baseline" in selected_policy.lower() or "baseline" in current_policy_id.lower()
+            if is_baseline:
+                st.sidebar.markdown("---")
+                st.sidebar.write(f"**Type:** Baseline Policy")
+                st.sidebar.caption("This is a baseline policy (regulatory floor)")
         
         # Show posture from current trace if available
         current_trace_id = st.session_state.get("current_trace_id")
@@ -337,21 +379,82 @@ def process_sandbox_request(user_prompt: str, user_id: str = "analyst_123"):
         surface_activations=pipeline_results.get("surface_activations", {})
     )
     
-    # Check if escalation occurred - use actual tool enforcement result
-    if pipeline_results.get("final_verdict") == "ESCALATE" and pipeline_results.get("tool_enforcement_result"):
+    # Extract and persist audit entries from enforcer, linking them to trace_id
+    enforcer_audit_entries = pipeline_results.get("enforcer_audit_entries", [])
+    for audit_entry in enforcer_audit_entries:
+        # Ensure trace_id is in evidence
+        if "evidence" not in audit_entry:
+            audit_entry["evidence"] = {}
+        if "trace_id" not in audit_entry["evidence"]:
+            audit_entry["evidence"]["trace_id"] = trace.trace_id
+        
+        # Add to centralized audit log
+        trace_manager.audit_log.append(audit_entry)
+        # Also add to trace
+        trace_manager.add_audit_to_trace(trace.trace_id, audit_entry)
+    
+    # Check if escalation occurred - create approval queue item and audit entry
+    if pipeline_results.get("final_verdict") == "ESCALATE":
+        # Extract tool information from pipeline results
+        # Try tool_enforcement_result first, then fall back to Gate 6 signals
         tool_result = pipeline_results.get("tool_enforcement_result")
+        gate_results = pipeline_results.get("gate_results", [])
+        gate6_result = next((g for g in gate_results if g.get("gate_num") == 6), None)
+        
+        # Extract tool name and params
+        tool_name = None
+        tool_params = {}
+        controls_applied = []
+        evidence = {}
+        
+        if tool_result:
+            tool_name = tool_result.get("tool")
+            tool_params = tool_result.get("params", {})
+            controls_applied = tool_result.get("controls_applied", [])
+            evidence = tool_result.get("evidence", {})
+        elif gate6_result:
+            gate6_signals = gate6_result.get("signals", {})
+            tool_name = gate6_signals.get("tool")
+            tool_params = gate6_signals.get("tool_params", {})
+            controls_applied = gate6_signals.get("controls_applied", [])
+            evidence = {}
+        
+        # Get verdict details from pipeline results
+        verdict_rule_id = pipeline_results.get("verdict_rule_id")
+        verdict_rationale = pipeline_results.get("verdict_rationale")
+        
+        # Create approval queue item
         approval_data = {
             "trace_id": trace.trace_id,  # Link approval to specific trace_id
-            "tool": tool_result.get("tool"),
+            "tool": tool_name or "escalation_required",
             "user_id": user_id,
             "timestamp": trace.timestamp,
-            "params": tool_result.get("params", {}),
+            "params": tool_params,
             "resolution": None,
-            "controls_applied": tool_result.get("controls_applied", []),
-            "evidence": tool_result.get("evidence", {})
+            "controls_applied": controls_applied,
+            "evidence": evidence,
+            "verdict_rule_id": verdict_rule_id,
+            "verdict_rationale": verdict_rationale
         }
         # Add to pending approvals - each request maintains independent state via trace_id
         st.session_state.pending_approvals.append(approval_data)
+        
+        # Create audit log entry for ESCALATE
+        trace_manager.add_audit_entry(
+            trace_id=trace.trace_id,
+            gate="S-O",  # System-Outbound, where tool calls happen
+            action=tool_name or "escalation_required",
+            decision="REQUIRE_APPROVAL",
+            user_id=user_id,
+            controls=controls_applied,
+            evidence={
+                "trace_id": trace.trace_id,
+                "verdict_rule_id": verdict_rule_id,
+                "verdict_rationale": verdict_rationale,
+                "tool_params": tool_params,
+                "request": user_prompt
+            }
+        )
     
     return trace
 
@@ -395,8 +498,13 @@ if not st.session_state.simulate_mode:
     demo_prompts = {
         "Select a demo prompt...": None,
         "Low Risk: What's the weather?": "What's the weather?",
-        "PII Export: Export all customer records with emails and SSNs to CSV": "Export all customer records with emails and SSNs to CSV",
-        "Medium Risk: Create a Jira task for Q4 compliance review": "Create a Jira task for Q4 compliance review",
+        "L2 Escalate: Create a Jira task for Q4 compliance review": "Create a Jira task for Q4 compliance review",
+        "L2 Escalate: Update the compliance document with new regulations": "Update the compliance document with new regulations",
+        "L2 Escalate: Export quarterly report data to CSV file": "Export quarterly report data to CSV file",
+        "L2 Escalate: Write a summary of the compliance audit findings": "Write a summary of the compliance audit findings",
+        "L3 Escalate: Export customer contact information": "Export customer contact information",
+        "L3 Escalate: Export all customer records with emails and SSNs to CSV": "Export all customer records with emails and SSNs to CSV",
+        "L3 Escalate: Get customer account numbers for analysis": "Get customer account numbers for analysis",
         "High Risk Denial: Delete all records": "Delete all records"
     }
     
@@ -588,22 +696,55 @@ st.caption("Baseline vs Custom policy differences")
 # Load baseline and current policies for comparison
 baseline_policy = None
 current_policy = None
-
-# Try to load baseline policy
-baseline_file = "policy_bank_compliance_baseline.json"
-if baseline_file in get_policy_files():
-    baseline_policy = load_policy_json(baseline_file)
+baseline_explanation = None
 
 # Get current policy
 if st.session_state.get("selected_policy") and st.session_state.get("enforcer"):
     current_policy_file = st.session_state.get("selected_policy")
     current_policy = load_policy_json(current_policy_file)
-    # If no current policy loaded, use baseline
-    if not current_policy:
-        current_policy = baseline_policy
+    
+    if current_policy:
+        # Try to find baseline based on baseline_parent_policy_id
+        baseline_parent_policy_id = current_policy.get('baseline_parent_policy_id')
+        current_policy_id = current_policy.get('policy_id', 'N/A')
+        
+        if baseline_parent_policy_id:
+            # Find the baseline policy file
+            baseline_file = find_baseline_policy_file(baseline_parent_policy_id)
+            if baseline_file:
+                baseline_policy = load_policy_json(baseline_file)
+                baseline_policy_id = baseline_policy.get('policy_id', baseline_parent_policy_id) if baseline_policy else baseline_parent_policy_id
+                baseline_explanation = f"Using `{baseline_policy_id}` because the selected policy (`{current_policy_id}`) has `baseline_parent_policy_id: {baseline_parent_policy_id}`"
+            else:
+                # Baseline parent specified but file not found
+                baseline_explanation = f"⚠️ Baseline parent `{baseline_parent_policy_id}` specified but policy file not found. Using default baseline."
+                baseline_file = "policy_bank_compliance_baseline.json"
+                if baseline_file in get_policy_files():
+                    baseline_policy = load_policy_json(baseline_file)
+        else:
+            # No baseline_parent_policy_id - use default
+            baseline_file = "policy_bank_compliance_baseline.json"
+            if baseline_file in get_policy_files():
+                baseline_policy = load_policy_json(baseline_file)
+            baseline_explanation = f"Using default baseline: `policy_bank_compliance_baseline.json` (no `baseline_parent_policy_id` specified in `{current_policy_id}`)"
+    else:
+        # Current policy failed to load, try default baseline
+        baseline_file = "policy_bank_compliance_baseline.json"
+        if baseline_file in get_policy_files():
+            baseline_policy = load_policy_json(baseline_file)
+            current_policy = baseline_policy
+        baseline_explanation = "Using default baseline (current policy failed to load)"
 else:
-    # If no policy selected, use baseline
-    current_policy = baseline_policy
+    # No policy selected, use default baseline
+    baseline_file = "policy_bank_compliance_baseline.json"
+    if baseline_file in get_policy_files():
+        baseline_policy = load_policy_json(baseline_file)
+        current_policy = baseline_policy
+    baseline_explanation = "Using default baseline (no policy selected)"
+
+# Display baseline explanation if available
+if baseline_explanation:
+    st.caption(f"📋 {baseline_explanation}")
 
 render_policy_diff(baseline_policy, current_policy)
 

@@ -1,0 +1,397 @@
+{
+  "policy_id": "l3_pii_strict",
+  "policy_version": "1.0.0",
+  "created": "2024-12-20",
+  "description": "L3 policy for high-risk PII/PHI scenarios - strict controls and denial of PII export operations",
+  "baseline_parent_policy_id": "bank_compliance_baseline",
+  "dials": {
+    "autonomy": {
+      "level": "L1",
+      "label": "minimal_autonomy",
+      "description": "Minimal autonomy - strict controls for PII operations"
+    },
+    "personalization": {
+      "level": "L1",
+      "label": "no_personalization",
+      "description": "No personalization to prevent PII leakage"
+    },
+    "memory": {
+      "level": "L1",
+      "label": "no_persistent_memory",
+      "description": "No persistent memory to prevent PII storage"
+    },
+    "inter_agent": {
+      "level": "L1",
+      "label": "none",
+      "description": "No inter-agent communication"
+    }
+  },
+  "gates": {
+    "U-I": {
+      "name": "User Inbound",
+      "direction": "user_to_agent",
+      "allow": [
+        "receive_instructions",
+        "receive_feedback",
+        "receive_edits"
+      ],
+      "controls": [
+        {
+          "type": "auth",
+          "params": {
+            "method": "sso",
+            "session_binding": true
+          }
+        },
+        {
+          "type": "scope_lock",
+          "params": {
+            "bind_to": "working_doc_ids"
+          }
+        },
+        {
+          "type": "injection_detect",
+          "params": {
+            "scan_pasted_text": true
+          }
+        },
+        {
+          "type": "dlp_scan",
+          "params": {
+            "strict_mode": true
+          }
+        },
+        {
+          "type": "log",
+          "params": {
+            "capture": [
+              "user_id",
+              "request_type",
+              "timestamp",
+              "pii_detected"
+            ]
+          }
+        }
+      ],
+      "deny": [
+        "request_export_external",
+        "request_include_customer_data",
+        "request_with_pii",
+        "request_with_ssn",
+        "request_with_credit_card"
+      ]
+    },
+    "U-O": {
+      "name": "User Outbound",
+      "direction": "agent_to_user",
+      "allow": [
+        "present_drafts",
+        "ask_clarifying_questions",
+        "show_citations"
+      ],
+      "controls": [
+        {
+          "type": "provenance_required",
+          "params": {
+            "apply_to": "regulatory_claims"
+          }
+        },
+        {
+          "type": "no_deception",
+          "params": {
+            "disclose_limitations": true
+          }
+        },
+        {
+          "type": "redaction",
+          "params": {
+            "strip": [
+              "customer_data",
+              "regulated_data",
+              "pii",
+              "phi",
+              "ssn",
+              "credit_card",
+              "account_number"
+            ],
+            "strict_mode": true
+          }
+        },
+        {
+          "type": "log",
+          "params": {
+            "capture": [
+              "response",
+              "citations",
+              "redaction_applied"
+            ]
+          }
+        }
+      ],
+      "deny": [
+        "share_to_external_recipients",
+        "claims_without_citations",
+        "output_with_pii",
+        "output_with_ssn"
+      ]
+    },
+    "S-I": {
+      "name": "System Inbound",
+      "direction": "system_to_agent",
+      "allow": [
+        "receive_sharepoint_docs",
+        "receive_occ_fdic_text"
+      ],
+      "controls": [
+        {
+          "type": "provenance_required",
+          "params": {
+            "capture": [
+              "source_uri",
+              "doc_hash",
+              "retrieval_timestamp"
+            ]
+          }
+        },
+        {
+          "type": "malware_scan"
+        },
+        {
+          "type": "dlp_scan",
+          "params": {
+            "strict_mode": true,
+            "block_on_pii": true
+          }
+        },
+        {
+          "type": "injection_scrub",
+          "params": {
+            "strip_hidden_instructions": true
+          }
+        },
+        {
+          "type": "log",
+          "params": {
+            "events": [
+              "retrieval_event",
+              "query",
+              "pii_detected"
+            ]
+          }
+        }
+      ],
+      "deny": [
+        "files_with_macros",
+        "files_with_executables",
+        "sources_not_on_allowlist",
+        "files_with_pii",
+        "files_with_customer_data"
+      ]
+    },
+    "S-O": {
+      "name": "System Outbound",
+      "direction": "agent_to_system",
+      "allow": [
+        {
+          "action": "read",
+          "target": "sharepoint"
+        },
+        {
+          "action": "read",
+          "target": "occ_fdic_db"
+        }
+      ],
+      "controls": [
+        {
+          "type": "log",
+          "params": {
+            "capture": [
+              "tool_call",
+              "params",
+              "result"
+            ]
+          }
+        }
+      ],
+      "deny": [
+        "delete_all_records",
+        "delete_records",
+        "export_data",
+        "csv_export",
+        "export_customer_data",
+        "export_pii",
+        "export_with_ssn",
+        "export_with_email",
+        "write_pii",
+        "create_file_with_pii"
+      ]
+    },
+    "M-I": {
+      "name": "Memory Inbound",
+      "direction": "memory_to_agent",
+      "allow": [
+        "retrieve_writing_style",
+        "retrieve_citation_format",
+        "retrieve_templates"
+      ],
+      "controls": [
+        {
+          "type": "data_minimization"
+        },
+        {
+          "type": "acl",
+          "params": {
+            "scope": "per_user"
+          }
+        },
+        {
+          "type": "log",
+          "params": {
+            "capture": [
+              "what_retrieved"
+            ]
+          }
+        },
+        {
+          "type": "versioning",
+          "params": {
+            "track_template_provenance": true
+          }
+        }
+      ],
+      "deny": [
+        "retrieve_regulated_data",
+        "cross_user_memory_access",
+        "retrieve_pii",
+        "retrieve_customer_data"
+      ]
+    },
+    "M-O": {
+      "name": "Memory Outbound",
+      "direction": "agent_to_memory",
+      "allow": [
+        "store_citation_format",
+        "store_templates",
+        "store_style_prefs"
+      ],
+      "controls": [
+        {
+          "type": "user_controls",
+          "params": {
+            "allow": [
+              "view",
+              "edit",
+              "delete"
+            ]
+          }
+        },
+        {
+          "type": "retention_policy",
+          "params": {
+            "max_days": 365,
+            "review_required": true
+          }
+        },
+        {
+          "type": "encryption",
+          "params": {
+            "at_rest": true
+          }
+        },
+        {
+          "type": "redaction",
+          "params": {
+            "apply_before_store": true,
+            "strict_mode": true
+          }
+        },
+        {
+          "type": "log"
+        }
+      ],
+      "deny": [
+        "store_pii",
+        "store_phi",
+        "store_customer_account_info",
+        "store_full_document_contents",
+        "store_ssn",
+        "store_credit_card",
+        "store_email_addresses"
+      ]
+    },
+    "A-I": {
+      "name": "Agent Inbound",
+      "direction": "other_agent_to_agent",
+      "allow": [],
+      "controls": [],
+      "deny": [
+        "*"
+      ],
+      "deny_reason": "Inter-agent communication disabled"
+    },
+    "A-O": {
+      "name": "Agent Outbound",
+      "direction": "agent_to_other_agent",
+      "allow": [],
+      "controls": [],
+      "deny": [
+        "*"
+      ],
+      "deny_reason": "Inter-agent communication disabled"
+    }
+  },
+  "overlays_enabled": [],
+  "overlays": {},
+  "rules": [
+    {
+      "rule_id": "R-001",
+      "baseline": true,
+      "enabled": true,
+      "description": "Require authentication for all user inputs",
+      "severity": "deny",
+      "policy_clause_ref": "§1.1",
+      "applies_to_gate": "U-I",
+      "applies_to_control": "auth"
+    },
+    {
+      "rule_id": "R-011",
+      "baseline": true,
+      "enabled": true,
+      "description": "Block delete operations on all records",
+      "severity": "deny",
+      "policy_clause_ref": "§3.2",
+      "applies_to_gate": "S-O",
+      "applies_to_control": "deny_pattern_check"
+    },
+    {
+      "rule_id": "R-301",
+      "baseline": false,
+      "enabled": true,
+      "description": "Deny all PII export operations - no exceptions",
+      "severity": "deny",
+      "policy_clause_ref": "§5.1",
+      "applies_to_gate": "S-O",
+      "applies_to_control": "pii_export_check"
+    },
+    {
+      "rule_id": "R-302",
+      "baseline": false,
+      "enabled": true,
+      "description": "Deny operations when PII is detected in request",
+      "severity": "deny",
+      "policy_clause_ref": "§5.2",
+      "applies_to_gate": "Gate 3",
+      "applies_to_control": "pii_detection_check"
+    },
+    {
+      "rule_id": "R-303",
+      "baseline": false,
+      "enabled": true,
+      "description": "Require strict DLP scan for all system inputs",
+      "severity": "deny",
+      "policy_clause_ref": "§5.3",
+      "applies_to_gate": "S-I",
+      "applies_to_control": "strict_dlp_scan"
+    }
+  ]
+}

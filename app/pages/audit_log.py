@@ -23,20 +23,26 @@ st.set_page_config(
 if "trace_manager" not in st.session_state:
     st.session_state.trace_manager = TraceManager()
 
+trace_manager = st.session_state.trace_manager
+
 st.title("📜 Audit Log")
 st.caption("Decision history & evidence")
 
 st.markdown("---")
 
-if not st.session_state.get("enforcer"):
-    st.error("No policy loaded. Please select a policy on the main dashboard.")
-    st.markdown("---")
-    if st.button("← Back to Main Dashboard"):
-        st.switch_page("app.py")
-    st.stop()
+# Read from centralized audit log (primary source)
+audit_log = trace_manager.get_audit_log()
 
-enforcer = st.session_state.enforcer
-audit_log = enforcer.get_audit_log()
+# Fall back to enforcer's audit log if it exists (for backward compatibility)
+if st.session_state.get("enforcer"):
+    enforcer_audit_log = st.session_state.enforcer.get_audit_log()
+    # Merge enforcer audit log entries that aren't already in centralized log
+    # (based on timestamp and action to avoid duplicates)
+    existing_entries = {(e.get("timestamp"), e.get("action")) for e in audit_log}
+    for entry in enforcer_audit_log:
+        entry_key = (entry.get("timestamp"), entry.get("action"))
+        if entry_key not in existing_entries:
+            audit_log.append(entry)
 
 if not audit_log:
     st.info("No audit log entries yet.")
@@ -99,6 +105,21 @@ else:
                 if st.button(f"Replay Trace {trace_id_from_evidence[:20]}...", key=f"replay_{entry.get('timestamp')}"):
                     st.session_state.current_trace_id = trace_id_from_evidence
                     st.rerun()
+        
+        # Display trace_id in table if available
+        if any(e.get("evidence", {}).get("trace_id") for e in filtered_log):
+            st.markdown("### Trace Links")
+            trace_entries = [e for e in filtered_log if e.get("evidence", {}).get("trace_id")]
+            for entry in trace_entries[-10:]:
+                trace_id = entry.get("evidence", {}).get("trace_id")
+                if trace_id:
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.write(f"**{entry.get('action', 'N/A')}** at {entry.get('timestamp', 'N/A')[:19]} - Trace: `{trace_id}`")
+                    with col2:
+                        if st.button("View Trace", key=f"view_trace_{trace_id}"):
+                            st.session_state.current_trace_id = trace_id
+                            st.rerun()
 
 # Navigation
 st.markdown("---")

@@ -117,6 +117,10 @@ if approval_data:
             st.rerun()
     with col_info:
         st.write(f"**Trace ID:** `{approval_data.get('trace_id', 'N/A')}`")
+        if approval_data.get('verdict_rule_id'):
+            st.write(f"**Rule:** `{approval_data.get('verdict_rule_id', 'N/A')}`")
+        if approval_data.get('verdict_rationale'):
+            st.caption(f"**Rationale:** {approval_data.get('verdict_rationale', 'N/A')}")
     
     st.markdown("---")
     
@@ -139,18 +143,28 @@ if approval_data:
             approval_data["approved_by"] = "current_user"
             approval_data["approved_at"] = datetime.utcnow().isoformat() + "Z"
             
-            # Log to audit trail
+            # Log to audit trail (centralized)
+            tool = approval_data.get("tool", "unknown_tool")
+            evidence = {
+                "trace_id": approval_data.get("trace_id"),
+                "approval_timestamp": approval_data["approved_at"],
+                "approver": "current_user",
+                "tool": tool,
+                "params": approval_data.get("params", {})
+            }
+            trace_manager.add_audit_entry(
+                trace_id=approval_data.get("trace_id"),
+                gate="S-O",
+                action=tool,
+                decision="APPROVED",
+                user_id="current_user",
+                controls=["human_approval"],
+                evidence=evidence
+            )
+            
+            # Also log to enforcer if it exists (for backward compatibility)
             if "enforcer" in st.session_state and st.session_state.enforcer:
-                enforcer = st.session_state.enforcer
-                tool = approval_data.get("tool", "unknown_tool")
-                evidence = {
-                    "trace_id": approval_data.get("trace_id"),
-                    "approval_timestamp": approval_data["approved_at"],
-                    "approver": "current_user",
-                    "tool": tool,
-                    "params": approval_data.get("params", {})
-                }
-                enforcer._log_audit(
+                st.session_state.enforcer._log_audit(
                     "S-O",
                     tool,
                     "APPROVED",
@@ -194,19 +208,29 @@ if approval_data:
             approval_data["rejected_at"] = datetime.utcnow().isoformat() + "Z"
             approval_data["rejection_reason"] = rejection_reason
             
-            # Log to audit trail
+            # Log to audit trail (centralized)
+            tool = approval_data.get("tool", "unknown_tool")
+            evidence = {
+                "trace_id": approval_data.get("trace_id"),
+                "rejection_timestamp": approval_data["rejected_at"],
+                "rejector": "current_user",
+                "tool": tool,
+                "params": approval_data.get("params", {}),
+                "rejection_reason": rejection_reason
+            }
+            trace_manager.add_audit_entry(
+                trace_id=approval_data.get("trace_id"),
+                gate="S-O",
+                action=tool,
+                decision="REJECTED",
+                user_id="current_user",
+                controls=["human_rejection"],
+                evidence=evidence
+            )
+            
+            # Also log to enforcer if it exists (for backward compatibility)
             if "enforcer" in st.session_state and st.session_state.enforcer:
-                enforcer = st.session_state.enforcer
-                tool = approval_data.get("tool", "unknown_tool")
-                evidence = {
-                    "trace_id": approval_data.get("trace_id"),
-                    "rejection_timestamp": approval_data["rejected_at"],
-                    "rejector": "current_user",
-                    "tool": tool,
-                    "params": approval_data.get("params", {}),
-                    "rejection_reason": rejection_reason
-                }
-                enforcer._log_audit(
+                st.session_state.enforcer._log_audit(
                     "S-O",
                     tool,
                     "REJECTED",
@@ -361,10 +385,14 @@ else:
                 with col1:
                     st.write(f"**Trace ID:** `{approval.get('trace_id', 'N/A')}`")
                     st.write(f"**Tool:** {approval.get('tool', 'N/A')}")
+                    if approval.get('verdict_rule_id'):
+                        st.caption(f"**Rule:** `{approval.get('verdict_rule_id', 'N/A')}`")
                 
                 with col2:
                     st.write(f"**User:** {approval.get('user_id', 'N/A')}")
                     st.write(f"**Timestamp:** {approval.get('timestamp', 'N/A')[:19]}")
+                    if approval.get('verdict_rationale'):
+                        st.caption(f"**Rationale:** {approval.get('verdict_rationale', 'N/A')[:100]}...")
                 
                 with col3:
                     render_verdict_badge("ESCALATE", approval.get("resolution"))

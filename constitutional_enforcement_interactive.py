@@ -74,6 +74,9 @@ class ConstitutionalEnforcer:
             "write_draft": "draft_doc",
             "jira_create": "jira_create_task",
             "export_data": "export_data",
+            "csv_export": "csv_export",
+            "create_file": "create_file",
+            "modify_document": "modify_document",
             "delete_all_records": "delete_all_records",
             "delete_records": "delete_records"
         }
