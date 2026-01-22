@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ui_components import render_approval_modal, render_verdict_badge
+from ui_components import render_approval_modal, render_verdict_badge, render_sidebar_navigation
 from trace_manager import TraceManager
 
 
@@ -36,6 +36,15 @@ if "mock_pending_approvals" not in st.session_state:
     st.session_state.mock_pending_approvals = []
 
 trace_manager = st.session_state.trace_manager
+
+# Sidebar with navigation
+with st.sidebar:
+    # Clickable title that navigates to home
+    if st.button("🛡️ Governance Trust Layer", use_container_width=True, key="nav_title_home"):
+        st.switch_page("app.py")
+    
+    # Navigation menu - placed below other sidebar content
+    render_sidebar_navigation()
 
 st.title("✅ Approval Queue")
 st.caption("View and manage pending approval requests")
@@ -91,6 +100,7 @@ pending_approvals = all_pending_approvals
 approval_data = None
 if trace_id:
     # Find approval in combined pending approvals (real + mock)
+    # If there are multiple approvals for the same trace_id, show the first unresolved one
     for approval in pending_approvals:
         if approval.get("trace_id") == trace_id and approval.get("resolution") is None:
             approval_data = approval
@@ -178,23 +188,36 @@ if approval_data:
             if trace:
                 trace.resolution = "APPROVED"
             
-            # Remove from appropriate list (real or mock) based on trace_id
+            # Remove from appropriate list (real or mock) based on approval_id or trace_id
+            approval_id = approval_data.get("approval_id")
             trace_id = approval_data.get("trace_id")
             # Check if it's a mock approval by checking if it exists in mock_pending_approvals
             is_mock = any(a.get("trace_id") == trace_id for a in st.session_state.mock_pending_approvals) if trace_id else False
             
             if is_mock and st.session_state.get("simulate_mode", True):
-                # Remove from mock approvals
-                st.session_state.mock_pending_approvals = [
-                    a for a in st.session_state.mock_pending_approvals 
-                    if a.get("trace_id") != trace_id
-                ]
+                # Remove from mock approvals - use approval_id if available, otherwise use trace_id
+                if approval_id:
+                    st.session_state.mock_pending_approvals = [
+                        a for a in st.session_state.mock_pending_approvals 
+                        if a.get("approval_id") != approval_id
+                    ]
+                else:
+                    st.session_state.mock_pending_approvals = [
+                        a for a in st.session_state.mock_pending_approvals 
+                        if a.get("trace_id") != trace_id
+                    ]
             else:
-                # Remove from real approvals
-                st.session_state.pending_approvals = [
-                    a for a in st.session_state.pending_approvals 
-                    if a.get("trace_id") != trace_id
-                ]
+                # Remove from real approvals - use approval_id if available, otherwise use trace_id
+                if approval_id:
+                    st.session_state.pending_approvals = [
+                        a for a in st.session_state.pending_approvals 
+                        if a.get("approval_id") != approval_id
+                    ]
+                else:
+                    st.session_state.pending_approvals = [
+                        a for a in st.session_state.pending_approvals 
+                        if a.get("trace_id") != trace_id
+                    ]
             
             st.success("Approval request approved!")
             st.balloons()
@@ -244,23 +267,36 @@ if approval_data:
             if trace:
                 trace.resolution = "REJECTED"
             
-            # Remove from appropriate list (real or mock) based on trace_id
+            # Remove from appropriate list (real or mock) based on approval_id or trace_id
+            approval_id = approval_data.get("approval_id")
             trace_id = approval_data.get("trace_id")
             # Check if it's a mock approval by checking if it exists in mock_pending_approvals
             is_mock = any(a.get("trace_id") == trace_id for a in st.session_state.mock_pending_approvals) if trace_id else False
             
             if is_mock and st.session_state.get("simulate_mode", True):
-                # Remove from mock approvals
-                st.session_state.mock_pending_approvals = [
-                    a for a in st.session_state.mock_pending_approvals 
-                    if a.get("trace_id") != trace_id
-                ]
+                # Remove from mock approvals - use approval_id if available, otherwise use trace_id
+                if approval_id:
+                    st.session_state.mock_pending_approvals = [
+                        a for a in st.session_state.mock_pending_approvals 
+                        if a.get("approval_id") != approval_id
+                    ]
+                else:
+                    st.session_state.mock_pending_approvals = [
+                        a for a in st.session_state.mock_pending_approvals 
+                        if a.get("trace_id") != trace_id
+                    ]
             else:
-                # Remove from real approvals
-                st.session_state.pending_approvals = [
-                    a for a in st.session_state.pending_approvals 
-                    if a.get("trace_id") != trace_id
-                ]
+                # Remove from real approvals - use approval_id if available, otherwise use trace_id
+                if approval_id:
+                    st.session_state.pending_approvals = [
+                        a for a in st.session_state.pending_approvals 
+                        if a.get("approval_id") != approval_id
+                    ]
+                else:
+                    st.session_state.pending_approvals = [
+                        a for a in st.session_state.pending_approvals 
+                        if a.get("trace_id") != trace_id
+                    ]
             
             st.error("Approval request rejected!")
             st.session_state["review_trace_id"] = None
@@ -384,6 +420,8 @@ else:
                 
                 with col1:
                     st.write(f"**Trace ID:** `{approval.get('trace_id', 'N/A')}`")
+                    if approval.get('gate_num'):
+                        st.write(f"**Gate:** {approval.get('gate_num')} - {approval.get('gate_name', 'N/A')}")
                     st.write(f"**Tool:** {approval.get('tool', 'N/A')}")
                     if approval.get('verdict_rule_id'):
                         st.caption(f"**Rule:** `{approval.get('verdict_rule_id', 'N/A')}`")
@@ -398,7 +436,9 @@ else:
                     render_verdict_badge("ESCALATE", approval.get("resolution"))
                 
                 with col4:
-                    if st.button("Review", key=f"review_{idx}", type="primary"):
+                    # Use approval_id if available, otherwise use trace_id + gate_num, fallback to idx
+                    approval_id = approval.get("approval_id") or f"{approval.get('trace_id', 'unknown')}_gate_{approval.get('gate_num', idx)}"
+                    if st.button("Review", key=f"review_{approval_id}", type="primary"):
                         st.session_state["review_trace_id"] = approval.get("trace_id")
                         st.rerun()
                 

@@ -13,6 +13,7 @@ from typing import Dict, Any, List, Optional
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from soft_ontology_manager import SoftOntologyManager
+from ui_components import render_sidebar_navigation
 
 
 # Page configuration
@@ -27,6 +28,15 @@ if "soft_ontology_manager" not in st.session_state:
     st.session_state.soft_ontology_manager = SoftOntologyManager()
 
 manager = st.session_state.soft_ontology_manager
+
+# Sidebar with navigation
+with st.sidebar:
+    # Clickable title that navigates to home
+    if st.button("🛡️ Governance Trust Layer", use_container_width=True, key="nav_title_home"):
+        st.switch_page("app.py")
+    
+    # Navigation menu - placed below other sidebar content
+    render_sidebar_navigation()
 
 st.title("📄 Soft Ontology Management")
 st.caption("Input organizational policy text to generate governance policies")

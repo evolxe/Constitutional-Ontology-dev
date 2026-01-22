@@ -12,6 +12,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from trace_manager import TraceManager
+from ui_components import render_sidebar_navigation
 
 
 # Page configuration
@@ -24,6 +25,15 @@ st.set_page_config(
 # Initialize session state
 if "trace_manager" not in st.session_state:
     st.session_state.trace_manager = TraceManager()
+
+# Sidebar with navigation
+with st.sidebar:
+    # Clickable title that navigates to home
+    if st.button("🛡️ Governance Trust Layer", use_container_width=True, key="nav_title_home"):
+        st.switch_page("app.py")
+    
+    # Navigation menu - placed below other sidebar content
+    render_sidebar_navigation()
 
 st.title("📦 Export")
 st.caption("Generate evidence packets for audit and compliance")

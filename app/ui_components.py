@@ -1082,3 +1082,50 @@ def render_risk_explanation(risk_level: str, risk_drivers: List[str]):
             st.write(f"- {driver}")
     else:
         st.info("No risk drivers identified")
+
+
+def render_sidebar_navigation():
+    """Render the shared sidebar navigation menu for all pages"""
+    # Hide default Streamlit navigation menu
+    st.markdown("""
+    <style>
+        /* Hide the default Streamlit navigation menu */
+        [data-testid="stSidebarNav"] {
+            display: none !important;
+        }
+        
+        /* Ensure sidebar content flows properly */
+        [data-testid="stSidebar"] {
+            overflow-y: auto;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Navigation menu - placed below other sidebar content
+    st.markdown("---")
+    st.markdown("### Navigation")
+    
+    # Custom navigation links
+    if st.button("🏠 Home", use_container_width=True, key="nav_home"):
+        st.switch_page("app.py")
+    
+    if st.button("📊 Pipeline Trace", use_container_width=True, key="nav_pipeline_trace"):
+        st.switch_page("pages/pipeline_trace.py")
+    
+    if st.button("✅ Approval Queue", use_container_width=True, key="nav_approval_queue"):
+        st.switch_page("pages/approval_queue.py")
+    
+    if st.button("📜 Audit Log", use_container_width=True, key="nav_audit_log"):
+        st.switch_page("pages/audit_log.py")
+    
+    if st.button("🔍 Gate Details", use_container_width=True, key="nav_gate_details"):
+        st.switch_page("pages/gate_details.py")
+    
+    if st.button("📝 Policy Editor", use_container_width=True, key="nav_policy_editor"):
+        st.switch_page("pages/policy_editor.py")
+    
+    if st.button("📄 Soft Ontology", use_container_width=True, key="nav_soft_ontology"):
+        st.switch_page("pages/soft_ontology.py")
+    
+    if st.button("📦 Export", use_container_width=True, key="nav_export"):
+        st.switch_page("pages/export.py")

@@ -29,17 +29,38 @@ from ui_components import (
     render_enforcement_pipeline_enhanced,
     render_escalation_details,
     render_policy_diff,
-    render_surface_activation_compact
+    render_surface_activation_compact,
+    render_sidebar_navigation
 )
 
 
 # Page configuration
 st.set_page_config(
-    page_title="Governance Trust Layer",
+    page_title="Home - Governance Trust Layer",
     page_icon="🛡️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
+    menu_items={
+        'Get Help': None,
+        'Report a bug': None,
+        'About': None
+    }
 )
+
+# Hide default Streamlit navigation menu and move custom navigation below sidebar content
+st.markdown("""
+<style>
+    /* Hide the default Streamlit navigation menu */
+    [data-testid="stSidebarNav"] {
+        display: none !important;
+    }
+    
+    /* Ensure sidebar content flows properly */
+    [data-testid="stSidebar"] {
+        overflow-y: auto;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Initialize session state
 if "trace_manager" not in st.session_state:
@@ -389,40 +410,54 @@ def process_sandbox_request(user_prompt: str, user_id: str = "analyst_123"):
         # Also add to trace
         trace_manager.add_audit_to_trace(trace.trace_id, audit_entry)
     
-    # Check if escalation occurred - create approval queue item and audit entry
-    if pipeline_results.get("final_verdict") == "ESCALATE":
-        # Extract tool information from pipeline results
-        # Try tool_enforcement_result first, then fall back to Gate 6 signals
-        tool_result = pipeline_results.get("tool_enforcement_result")
-        gate_results = pipeline_results.get("gate_results", [])
-        gate6_result = next((g for g in gate_results if g.get("gate_num") == 6), None)
+    # Check for escalated gates - create approval queue item for each escalated gate
+    gate_results = pipeline_results.get("gate_results", [])
+    tool_result = pipeline_results.get("tool_enforcement_result")
+    
+    # Find all gates that escalated
+    escalated_gates = [
+        gate for gate in gate_results 
+        if gate.get("status") == "escalated" or gate.get("verdict") == "ESCALATE"
+    ]
+    
+    # Get default tool information from tool_enforcement_result if available
+    default_tool_name = None
+    default_tool_params = {}
+    default_controls_applied = []
+    default_evidence = {}
+    
+    if tool_result:
+        default_tool_name = tool_result.get("tool")
+        default_tool_params = tool_result.get("params", {})
+        default_controls_applied = tool_result.get("controls_applied", [])
+        default_evidence = tool_result.get("evidence", {})
+    
+    # Get verdict details from pipeline results
+    verdict_rule_id = pipeline_results.get("verdict_rule_id")
+    verdict_rationale = pipeline_results.get("verdict_rationale")
+    
+    # Create a separate approval queue item for each escalated gate
+    for escalated_gate in escalated_gates:
+        gate_num = escalated_gate.get("gate_num")
+        gate_name = escalated_gate.get("gate_name", f"Gate {gate_num}")
+        gate_signals = escalated_gate.get("signals", {})
+        decision_reason = escalated_gate.get("decision_reason")
         
-        # Extract tool name and params
-        tool_name = None
-        tool_params = {}
-        controls_applied = []
-        evidence = {}
+        # Extract tool information from gate signals (prefer gate-specific, fall back to default)
+        tool_name = gate_signals.get("tool") or default_tool_name
+        tool_params = gate_signals.get("tool_params") or gate_signals.get("params") or default_tool_params
+        controls_applied = gate_signals.get("controls_applied") or default_controls_applied
+        evidence = default_evidence.copy()
         
-        if tool_result:
-            tool_name = tool_result.get("tool")
-            tool_params = tool_result.get("params", {})
-            controls_applied = tool_result.get("controls_applied", [])
-            evidence = tool_result.get("evidence", {})
-        elif gate6_result:
-            gate6_signals = gate6_result.get("signals", {})
-            tool_name = gate6_signals.get("tool")
-            tool_params = gate6_signals.get("tool_params", {})
-            controls_applied = gate6_signals.get("controls_applied", [])
-            evidence = {}
-        
-        # Get verdict details from pipeline results
-        verdict_rule_id = pipeline_results.get("verdict_rule_id")
-        verdict_rationale = pipeline_results.get("verdict_rationale")
-        
-        # Create approval queue item
+        # Create approval queue item for this gate
+        # Use a unique approval_id that combines trace_id and gate_num to ensure uniqueness
+        approval_id = f"{trace.trace_id}_gate_{gate_num}"
         approval_data = {
+            "approval_id": approval_id,  # Unique identifier for this approval
             "trace_id": trace.trace_id,  # Link approval to specific trace_id
-            "tool": tool_name or "escalation_required",
+            "gate_num": gate_num,
+            "gate_name": gate_name,
+            "tool": tool_name or f"escalation_required_gate_{gate_num}",
             "user_id": user_id,
             "timestamp": trace.timestamp,
             "params": tool_params,
@@ -430,23 +465,29 @@ def process_sandbox_request(user_prompt: str, user_id: str = "analyst_123"):
             "controls_applied": controls_applied,
             "evidence": evidence,
             "verdict_rule_id": verdict_rule_id,
-            "verdict_rationale": verdict_rationale
+            "verdict_rationale": decision_reason or verdict_rationale
         }
-        # Add to pending approvals - each request maintains independent state via trace_id
+        # Add to pending approvals - each gate gets its own approval item
         st.session_state.pending_approvals.append(approval_data)
         
-        # Create audit log entry for ESCALATE
+        # Debug: Log that we created an approval for this gate
+        st.write(f"✅ Created approval queue item for Gate {gate_num} ({gate_name})")
+        
+        # Create audit log entry for this escalated gate
+        gate_id = f"Gate {gate_num}" if gate_num else "Unknown"
         trace_manager.add_audit_entry(
             trace_id=trace.trace_id,
-            gate="S-O",  # System-Outbound, where tool calls happen
-            action=tool_name or "escalation_required",
+            gate=gate_id,
+            action=tool_name or f"escalation_required_gate_{gate_num}",
             decision="REQUIRE_APPROVAL",
             user_id=user_id,
             controls=controls_applied,
             evidence={
                 "trace_id": trace.trace_id,
+                "gate_num": gate_num,
+                "gate_name": gate_name,
                 "verdict_rule_id": verdict_rule_id,
-                "verdict_rationale": verdict_rationale,
+                "verdict_rationale": decision_reason or verdict_rationale,
                 "tool_params": tool_params,
                 "request": user_prompt
             }
@@ -457,7 +498,10 @@ def process_sandbox_request(user_prompt: str, user_id: str = "analyst_123"):
 
 # Sidebar
 with st.sidebar:
-    st.title("🛡️ Governance Trust Layer")
+    # Clickable title that navigates to home
+    if st.button("🛡️ Governance Trust Layer", use_container_width=True, key="nav_title_home"):
+        st.switch_page("app.py")
+    
     load_policy_summary()
     
     st.sidebar.markdown("---")
@@ -466,6 +510,9 @@ with st.sidebar:
     for gate_name, description in legend.items():
         with st.expander(gate_name):
             st.caption(description)
+    
+    # Navigation menu - placed below other sidebar content
+    render_sidebar_navigation()
 
 
 # Header with Simulate/Enforce toggle
