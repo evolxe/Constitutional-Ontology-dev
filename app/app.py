@@ -784,10 +784,6 @@ else:
         current_policy = baseline_policy
     baseline_explanation = "Using default baseline (no policy selected)"
 
-# Display baseline explanation if available
-if baseline_explanation:
-    st.caption(f"📋 {baseline_explanation}")
-
 render_policy_diff(baseline_policy, current_policy)
 
 

@@ -101,8 +101,9 @@ else:
     st.session_state.text_key = None
 
 # Analyze Text Intent button - directly below text area
-# Disabled if no text input
-analyze_disabled = not st.session_state.input_text or not st.session_state.input_text.strip()
+# Always enabled - check input_text directly from widget value, not session state
+# This ensures the button is enabled immediately as user types
+analyze_disabled = not input_text or not input_text.strip()
 if st.button("🔍 Analyze Text Intent", type="primary", use_container_width=True, disabled=analyze_disabled):
     if not st.session_state.input_text or not st.session_state.input_text.strip():
         st.warning("Please enter some text in the text area above before analyzing.")

@@ -40,27 +40,48 @@ st.caption("Generate evidence packets for audit and compliance")
 
 st.markdown("---")
 
-if not st.session_state.get("enforcer"):
-    st.error("No policy loaded. Please select a policy on the main dashboard.")
-    st.markdown("---")
-    if st.button("← Back to Main Dashboard"):
-        st.switch_page("app.py")
-    st.stop()
-
-enforcer = st.session_state.enforcer
 trace_manager = st.session_state.trace_manager
+
+# Get policy info if available (optional - not required for audit log export)
+policy_id = "N/A"
+policy_version = "N/A"
+if st.session_state.get("enforcer"):
+    enforcer = st.session_state.enforcer
+    policy_id = enforcer.policy.get("policy_id", "N/A")
+    policy_version = enforcer.policy.get("policy_version", "N/A")
 
 col1, col2 = st.columns(2)
 
 with col1:
     st.markdown("#### Export Options")
-    export_trace_id = st.text_input("Trace ID (leave empty for all traces)", key="export_trace_id_page")
+    
+    # Export type selection
+    export_type = st.radio(
+        "Export Type",
+        ["Evidence Packet (Traces + Audit Log)", "Audit Log Only"],
+        key="export_type_selector"
+    )
+    
+    # Initialize variables
+    export_trace_id = None
+    include_full_trace = False
+    include_audit_log = True
+    include_policy_version = False
+    
+    if export_type == "Evidence Packet (Traces + Audit Log)":
+        export_trace_id = st.text_input("Trace ID (leave empty for all traces)", key="export_trace_id_page")
+        include_full_trace = st.checkbox("Include full trace data", value=True, key="export_full_trace_page")
+        include_audit_log = st.checkbox("Include audit log entries", value=True, key="export_audit_log_page")
+        include_policy_version = st.checkbox("Include policy version hash", value=True, key="export_policy_hash_page")
+    else:
+        # Audit log only export
+        st.info("📜 Exporting complete audit log from TraceManager")
+        
+        # Show audit log stats
+        audit_log = trace_manager.get_audit_log()
+        st.metric("Total Audit Entries", len(audit_log))
 
-    include_full_trace = st.checkbox("Include full trace data", value=True, key="export_full_trace_page")
-    include_audit_log = st.checkbox("Include audit log entries", value=True, key="export_audit_log_page")
-    include_policy_version = st.checkbox("Include policy version hash", value=True, key="export_policy_hash_page")
-
-    if st.button("Generate Evidence Packet", type="primary", key="generate_evidence_page"):
+    if st.button("Generate Export", type="primary", key="generate_evidence_page"):
         def make_json_serializable(obj, _visited=None):
             """Recursively convert objects to JSON-serializable types, handling circular references"""
             if _visited is None:
@@ -105,38 +126,54 @@ with col1:
 
         evidence_packet = {
             "export_timestamp": datetime.utcnow().isoformat() + "Z",
-            "policy_version": enforcer.policy.get("policy_version", "N/A"),
-            "policy_id": enforcer.policy.get("policy_id", "N/A")
+            "policy_version": policy_version,
+            "policy_id": policy_id
         }
 
-        if export_trace_id:
+        # Get audit log from TraceManager (centralized source)
+        audit_log = trace_manager.get_audit_log()
+
+        if export_type == "Audit Log Only":
+            # Export only audit log
+            evidence_packet["audit_log"] = make_json_serializable(audit_log)
+            evidence_packet["audit_log_entry_count"] = len(audit_log)
+            evidence_packet["export_type"] = "audit_log_only"
+        elif export_trace_id:
+            # Export specific trace with related audit entries
             trace = trace_manager.get_trace(export_trace_id)
             if trace:
                 if include_full_trace:
                     trace_dict = trace_manager.to_dict(trace)
                     evidence_packet["trace"] = make_json_serializable(trace_dict)
                 if include_audit_log:
+                    # Filter audit entries for this specific trace
                     audit_entries = [
-                        make_json_serializable(e) for e in enforcer.get_audit_log()
+                        make_json_serializable(e) for e in audit_log
                         if e.get("evidence", {}).get("trace_id") == export_trace_id
                     ]
                     evidence_packet["related_audit_entries"] = audit_entries
+                    evidence_packet["audit_log_entry_count"] = len(audit_entries)
             else:
                 st.error(f"Trace ID {export_trace_id} not found.")
         else:
+            # Export all traces and audit log
             if include_full_trace:
                 all_traces = trace_manager.get_all_traces()
                 evidence_packet["all_traces"] = make_json_serializable(all_traces)
             if include_audit_log:
-                audit_log = enforcer.get_audit_log()
+                # Export all audit log entries
                 evidence_packet["audit_log"] = make_json_serializable(audit_log)
+                evidence_packet["audit_log_entry_count"] = len(audit_log)
 
-        if include_policy_version:
+        if include_policy_version and st.session_state.get("enforcer"):
             policy_str = json.dumps(enforcer.policy, sort_keys=True)
             evidence_packet["policy_hash"] = str(hash(policy_str))
 
         st.session_state["evidence_packet"] = evidence_packet
-        st.success("Evidence packet generated!")
+        if export_type == "Audit Log Only":
+            st.success(f"✅ Audit log exported! ({len(audit_log)} entries)")
+        else:
+            st.success("✅ Evidence packet generated!")
 
     # Download button in Export Options section
     if "evidence_packet" in st.session_state:
