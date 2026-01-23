@@ -289,10 +289,10 @@ def load_policy_summary():
         st.sidebar.markdown("---")
         st.sidebar.markdown("### System Health")
         
-        # Count both real and mock pending approvals (only unresolved ones)
+        # Count only real pending approvals (mock approvals are for demo purposes only)
+        # Mock approvals should not be counted in System Health to avoid confusion
         real_pending = [a for a in st.session_state.pending_approvals if a.get("resolution") is None]
-        mock_pending = [a for a in st.session_state.mock_pending_approvals if a.get("resolution") is None] if st.session_state.get("simulate_mode", True) else []
-        pending_count = len(real_pending) + len(mock_pending)
+        pending_count = len(real_pending)
         
         if pending_count > 0:
             st.sidebar.warning(f"⚠ {pending_count} pending approval(s)")
@@ -540,10 +540,10 @@ if not st.session_state.simulate_mode:
     st.markdown("**Load Demo Prompt:**")
     demo_prompts = {
         "Select a demo prompt...": None,
-        "PASS: What's the weather?": "What's the weather?",
-        "ESCALATE: Create a jira ticket": "Create a jira ticket",
-        "DENY: Delete all records": "Delete all records",
-        "DENY: Export customer PII data": "Export customer PII data"
+        "What's the weather?": "What's the weather?",
+        "Create a jira ticket": "Create a jira ticket",
+        "Delete all records": "Delete all records",
+        "Export customer PII data": "Export customer PII data"
     }
     
     # Demo prompts dropdown - selection persists across policy changes via key
@@ -597,12 +597,16 @@ if not st.session_state.simulate_mode:
         
         if submit_button and user_input:
             with st.spinner("Processing request through enforcement pipeline..."):
+                # Clear current trace to reset gates before processing new submission
+                st.session_state.current_trace_id = None
                 # Clear any mock state references when submitting in ENFORCE mode
                 # (though current_trace_id will be set to new trace anyway)
                 trace = process_sandbox_request(user_input)
                 if trace:
                     st.session_state.current_trace_id = trace.trace_id
                     st.session_state.request_submitted_successfully = True
+                    # Store verdict for escalation alert
+                    st.session_state.last_verdict = trace.verdict
                     st.rerun()
         
         elif submit_button and not user_input:
@@ -611,7 +615,7 @@ if not st.session_state.simulate_mode:
     
     st.markdown("---")
 
-# Initialize predefined state for simulate mode
+# Initialize predefined state for simulate mode - prepopulate with mock result
 if st.session_state.simulate_mode:
     trace_manager = st.session_state.trace_manager
     # Initialize mock state if not already done or if mock approvals are empty
@@ -622,12 +626,9 @@ if st.session_state.simulate_mode:
             trace_manager.traces[mock_trace.trace_id] = mock_trace
         # Store mock approvals in session state
         st.session_state.mock_pending_approvals = mock_pending_approvals.copy()
-        # Set current trace to mock trace if not already set
-        if not st.session_state.current_trace_id:
-            st.session_state.current_trace_id = mock_trace.trace_id
-    # Ensure mock trace exists in trace manager even if approvals were cleared
-    elif not st.session_state.current_trace_id:
-        # Reinitialize mock trace if current_trace_id is not set
+    # Ensure mock trace exists in trace manager
+    if not st.session_state.current_trace_id:
+        # Prepopulate with mock trace for simulate mode demo
         mock_trace, _, _ = get_mock_state()
         if not trace_manager.get_trace(mock_trace.trace_id):
             trace_manager.traces[mock_trace.trace_id] = mock_trace
@@ -667,6 +668,11 @@ if st.session_state.current_trace_id:
 if current_trace:
     gate_results = current_trace.pipeline_results.get("gate_results", [])
     render_cognitive_onramp(current_trace.surface_activations, gate_results)
+    
+    # Show prominent escalation alert if verdict is ESCALATE
+    if current_trace.verdict == "ESCALATE" and st.session_state.get("request_submitted_successfully"):
+        st.markdown("---")
+        st.warning("⚠️ **Action Requires Approval** - This request has been escalated and requires human review. Scroll down to review details and navigate to the Approval Queue.")
 else:
     st.markdown("### Cognitive Onramp")
     st.caption("Every AI request passes through 8 checkpoints across 4 surfaces.")

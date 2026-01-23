@@ -52,6 +52,7 @@ st.caption("View and manage pending approval requests")
 st.markdown("---")
 
 # Initialize mock approvals in session state if in simulate mode and not already initialized
+# These are for demo purposes only and should not be counted in System Health
 if st.session_state.get("simulate_mode", True) and not st.session_state.mock_pending_approvals:
     # Create mock approvals for demo
     mock_approval_data_1 = {

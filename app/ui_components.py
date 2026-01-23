@@ -658,11 +658,15 @@ def render_escalation_details(trace_data: Dict[str, Any], approval_data: Optiona
         st.write(f"**Reason:** {reason}")
         st.write(f"**Policy Reference:** {policy_ref}")
         
-        if st.button("Open Approval Queue →", type="primary", key="open_approval_queue"):
-            # Set the trace_id in session state if available for direct review
-            if approval_data:
-                st.session_state["review_trace_id"] = approval_data.get("trace_id")
-            st.switch_page("pages/approval_queue.py")
+        # Prominent call-to-action button
+        st.markdown("---")
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("🔍 Review in Approval Queue →", type="primary", use_container_width=True, key="open_approval_queue"):
+                # Set the trace_id in session state if available for direct review
+                if approval_data:
+                    st.session_state["review_trace_id"] = approval_data.get("trace_id")
+                st.switch_page("pages/approval_queue.py")
 
 
 def compare_policies(baseline_policy: Dict[str, Any], current_policy: Dict[str, Any]) -> Dict[str, Any]:

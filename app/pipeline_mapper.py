@@ -522,35 +522,36 @@ def _execute_export_pii_prompt(request: str, user_id: str, enforcer: Constitutio
         "processing_time_ms": processing_time
     })
     
-    # Gate 5: Permission Check - PII export → DENY
+    # Gate 5: Permission Check - PII export → ESCALATE (requires human approval)
     start_time = time.time()
     tool_params = {"format": "csv", "scope": "all"}
     enforcement_result = enforcer.pre_tool_call(tool_name, tool_params, user_id)
     processing_time = (time.time() - start_time) * 1000
     gate_results.append({
-        "gate_num": 5, "gate_name": "Permission Check", "status": "failed", "verdict": "DENY",
+        "gate_num": 5, "gate_name": "Permission Check", "status": "escalated", "verdict": "ESCALATE",
         "signals": {
             "tool": tool_name, "tool_params": tool_params,
             "decision": enforcement_result.decision.value if hasattr(enforcement_result.decision, 'value') else str(enforcement_result.decision),
-            "controls_applied": enforcement_result.controls_applied
+            "controls_applied": enforcement_result.controls_applied,
+            "requires_approval": True
         },
         "policies": [],
-        "decision_reason": "PII export operations are denied",
+        "decision_reason": "PII export operations require human approval for authorization context",
         "processing_time_ms": processing_time
     })
     
-    # Gate 6: Action Approval - DENY
+    # Gate 6: Action Approval - ESCALATE (requires human approval)
     start_time = time.time()
     processing_time = (time.time() - start_time) * 1000
     gate_results.append({
-        "gate_num": 6, "gate_name": "Action Approval", "status": "failed", "verdict": "DENY",
+        "gate_num": 6, "gate_name": "Action Approval", "status": "escalated", "verdict": "ESCALATE",
         "signals": {
-            "tool": tool_name, "requires_approval": False,
+            "tool": tool_name, "requires_approval": True,
             "decision": enforcement_result.decision.value if hasattr(enforcement_result.decision, 'value') else str(enforcement_result.decision),
             "controls_applied": enforcement_result.controls_applied
         },
         "policies": [],
-        "decision_reason": "PII export operations are denied",
+        "decision_reason": "PII export operations require human approval for authorization context",
         "processing_time_ms": processing_time
     })
     
@@ -593,7 +594,7 @@ def _execute_export_pii_prompt(request: str, user_id: str, enforcer: Constitutio
     return {
         "gate_results": gate_results,
         "surface_activations": surfaces_touched,
-        "final_verdict": "DENY",
+        "final_verdict": "ESCALATE",
         "short_circuited": False,
         "baseline_policy_id": baseline_policy_id,
         "posture_level": posture_level,
