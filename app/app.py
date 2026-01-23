@@ -570,7 +570,10 @@ if not st.session_state.simulate_mode:
     prompt_selected = selected_demo and demo_prompts[selected_demo]
     if st.button("Load Selected Prompt", type="primary", use_container_width=True, disabled=not prompt_selected):
         if prompt_selected:
+            # Reset sidebar session state when loading new demo prompt
             st.session_state["user_prompt_input"] = demo_prompts[selected_demo]
+            st.session_state["current_trace_id"] = None  # Clear current trace to reset sidebar
+            st.session_state["request_submitted_successfully"] = False  # Reset submission status
             st.rerun()
     
     # Policy selection is optional - policies are independent and don't influence execution
@@ -604,10 +607,29 @@ if not st.session_state.simulate_mode:
         
         if submit_button and user_input:
             with st.spinner("Processing request through enforcement pipeline..."):
-                # Clear current trace to reset gates before processing new submission
+                # Clear all viewing/display state across all pages before processing new submission
                 st.session_state.current_trace_id = None
-                # Clear any mock state references when submitting in ENFORCE mode
-                # (though current_trace_id will be set to new trace anyway)
+                st.session_state.request_submitted_successfully = False
+                
+                # Clear viewing state that affects other pages
+                if "review_trace_id" in st.session_state:
+                    del st.session_state.review_trace_id
+                if "review_approval_id" in st.session_state:
+                    del st.session_state.review_approval_id
+                if "last_verdict" in st.session_state:
+                    del st.session_state.last_verdict
+                if "copied_trace_id" in st.session_state:
+                    del st.session_state.copied_trace_id
+                
+                # Clear all approval queue entries
+                st.session_state.pending_approvals = []
+                st.session_state.mock_pending_approvals = []
+                
+                # Clear all audit log entries
+                trace_manager = st.session_state.trace_manager
+                trace_manager.audit_log = []
+                
+                # Process the new request
                 trace = process_sandbox_request(user_input)
                 if trace:
                     st.session_state.current_trace_id = trace.trace_id
