@@ -405,10 +405,17 @@ def process_sandbox_request(user_prompt: str, user_id: str = "analyst_123"):
         if "trace_id" not in audit_entry["evidence"]:
             audit_entry["evidence"]["trace_id"] = trace.trace_id
         
-        # Add to centralized audit log
-        trace_manager.audit_log.append(audit_entry)
-        # Also add to trace
-        trace_manager.add_audit_to_trace(trace.trace_id, audit_entry)
+        # Use add_audit_entry method which handles deduplication
+        # Convert enforcer audit entry format to add_audit_entry format
+        trace_manager.add_audit_entry(
+            trace_id=trace.trace_id,
+            gate=audit_entry.get("gate", "Unknown"),
+            action=audit_entry.get("action", "unknown"),
+            decision=audit_entry.get("decision", "UNKNOWN"),
+            user_id=audit_entry.get("user_id", "unknown"),
+            controls=audit_entry.get("controls", []),
+            evidence=audit_entry.get("evidence", {})
+        )
     
     # Check for escalated gates - create approval queue item for each escalated gate
     gate_results = pipeline_results.get("gate_results", [])
@@ -681,7 +688,8 @@ else:
 st.markdown("---")
 
 # Main content area - row 1: Enforcement Pipeline + Surface Activation
-row1_col1, row1_col2 = st.columns([3, 2])
+# Reduced Surface Activation column width by 15%: from 2/5 (40%) to ~34% (ratio 2:1)
+row1_col1, row1_col2 = st.columns([2, 1])
 
 with row1_col1:
     # 1. Enforcement Pipeline (WHEN)
@@ -697,7 +705,8 @@ with row1_col2:
     if current_trace:
         render_surface_activation_compact(current_trace.surface_activations, trace_dict)
     else:
-        st.markdown("### Surface Activation (interaction points touched)")
+        st.markdown("### Surface Activation")
+        st.write("(interaction points touched)")
         st.caption("Spatial boundaries: where governance applied")
         st.info("Submit a request to see surface activation.")
     

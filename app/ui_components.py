@@ -980,7 +980,8 @@ def render_policy_diff(baseline_policy: Optional[Dict[str, Any]] = None, current
 
 def render_surface_activation_compact(surfaces_touched: Dict[str, bool], trace_data: Dict[str, Any] = None):
     """Render compact surface activation for right column"""
-    st.markdown("### Surface Activation (interaction points touched)")
+    st.markdown("### Surface Activation")
+    st.write("(interaction points touched)")
     st.caption("Spatial boundaries: where governance applied")
     
     # Fixed height for surface tiles (120px)

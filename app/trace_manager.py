@@ -123,7 +123,7 @@ class TraceManager:
             self.traces[trace_id].audit_entries.append(audit_entry)
     
     def add_audit_entry(self, trace_id: str, gate: str, action: str, decision: str, user_id: str, controls: list, evidence: dict):
-        """Add an audit entry to the centralized audit log"""
+        """Add an audit entry to the centralized audit log (with deduplication)"""
         from datetime import datetime
         audit_entry = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
@@ -138,12 +138,32 @@ class TraceManager:
         if "trace_id" not in audit_entry["evidence"]:
             audit_entry["evidence"]["trace_id"] = trace_id
         
-        # Add to centralized audit log
-        self.audit_log.append(audit_entry)
+        # Check for duplicates before adding
+        # Create a unique key based on timestamp, gate, action, decision, user_id, and trace_id
+        # This prevents exact duplicates while allowing legitimate separate entries
+        entry_key = (
+            audit_entry["timestamp"],
+            audit_entry["gate"],
+            audit_entry["action"],
+            audit_entry["decision"],
+            audit_entry["user_id"],
+            audit_entry["evidence"].get("trace_id")
+        )
         
-        # Also add to trace if it exists
-        if trace_id in self.traces:
-            self.traces[trace_id].audit_entries.append(audit_entry)
+        # Check if this exact entry already exists
+        existing_keys = {
+            (e.get("timestamp"), e.get("gate"), e.get("action"), e.get("decision"), e.get("user_id"), e.get("evidence", {}).get("trace_id"))
+            for e in self.audit_log
+        }
+        
+        if entry_key not in existing_keys:
+            # Add to centralized audit log only if not duplicate
+            self.audit_log.append(audit_entry)
+            
+            # Also add to trace if it exists
+            if trace_id in self.traces:
+                self.traces[trace_id].audit_entries.append(audit_entry)
+        # If duplicate, skip adding (but still return the entry for consistency)
         
         return audit_entry
     

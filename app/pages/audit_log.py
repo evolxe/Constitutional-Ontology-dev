@@ -43,16 +43,25 @@ st.markdown("---")
 # Read from centralized audit log (primary source)
 audit_log = trace_manager.get_audit_log()
 
-# Fall back to enforcer's audit log if it exists (for backward compatibility)
-if st.session_state.get("enforcer"):
-    enforcer_audit_log = st.session_state.enforcer.get_audit_log()
-    # Merge enforcer audit log entries that aren't already in centralized log
-    # (based on timestamp and action to avoid duplicates)
-    existing_entries = {(e.get("timestamp"), e.get("action")) for e in audit_log}
-    for entry in enforcer_audit_log:
-        entry_key = (entry.get("timestamp"), entry.get("action"))
-        if entry_key not in existing_entries:
-            audit_log.append(entry)
+# Deduplicate audit log entries based on unique key
+# Create a set of unique keys to identify duplicates
+seen_entries = set()
+deduplicated_log = []
+for entry in audit_log:
+    # Create unique key: timestamp + gate + action + decision + user_id + trace_id
+    entry_key = (
+        entry.get("timestamp"),
+        entry.get("gate"),
+        entry.get("action"),
+        entry.get("decision"),
+        entry.get("user_id"),
+        entry.get("evidence", {}).get("trace_id")
+    )
+    if entry_key not in seen_entries:
+        seen_entries.add(entry_key)
+        deduplicated_log.append(entry)
+
+audit_log = deduplicated_log
 
 if not audit_log:
     st.info("No audit log entries yet.")
@@ -120,14 +129,19 @@ else:
         if any(e.get("evidence", {}).get("trace_id") for e in filtered_log):
             st.markdown("### Trace Links")
             trace_entries = [e for e in filtered_log if e.get("evidence", {}).get("trace_id")]
-            for entry in trace_entries[-10:]:
+            # Use a set to track unique trace_ids to avoid duplicate buttons
+            seen_trace_ids = set()
+            for idx, entry in enumerate(trace_entries[-10:]):
                 trace_id = entry.get("evidence", {}).get("trace_id")
-                if trace_id:
+                if trace_id and trace_id not in seen_trace_ids:
+                    seen_trace_ids.add(trace_id)
                     col1, col2 = st.columns([3, 1])
                     with col1:
                         st.write(f"**{entry.get('action', 'N/A')}** at {entry.get('timestamp', 'N/A')[:19]} - Trace: `{trace_id}`")
                     with col2:
-                        if st.button("View Trace", key=f"view_trace_{trace_id}"):
+                        # Use index and timestamp to ensure unique key
+                        unique_key = f"view_trace_{trace_id}_{idx}_{entry.get('timestamp', '').replace(':', '').replace('-', '')}"
+                        if st.button("View Trace", key=unique_key):
                             st.session_state.current_trace_id = trace_id
                             st.rerun()
 
